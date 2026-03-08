@@ -1,3 +1,10 @@
+export interface QueryFile {
+  name: string
+  filePath: string
+  mtime: number
+  size: number
+}
+
 export interface HistoryEntry {
   id: string
   timestamp: number

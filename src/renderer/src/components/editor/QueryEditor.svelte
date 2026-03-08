@@ -9,7 +9,14 @@
   import { historyStore } from '../../stores/history.svelte'
   import { connectionStore } from '../../stores/connection.svelte'
 
-  let { initialQuery = '', onQueryChange, onToggleHistory }: { initialQuery?: string; onQueryChange?: (query: string) => void; onToggleHistory?: () => void } = $props()
+  let { initialQuery = '', filePath, onQueryChange, onToggleHistory }: {
+    initialQuery?: string
+    filePath?: string
+    onQueryChange?: (query: string) => void
+    onToggleHistory?: () => void
+  } = $props()
+
+  let autoSaveTimer: ReturnType<typeof setTimeout> | undefined
 
   // Editor state
   let editorContainer: HTMLDivElement | undefined = $state()
@@ -151,7 +158,7 @@
     isDragging = false
   }
 
-  onMount(() => {
+  onMount(async () => {
     if (!editorContainer) return
 
     const runQueryKeymap = Prec.highest(keymap.of([
@@ -204,19 +211,41 @@
       }
     })
 
-    // Debounced content sync for persistence
+    // Debounced content sync for persistence + file auto-save
     let syncTimer: ReturnType<typeof setTimeout> | undefined
     const contentSync = EditorView.updateListener.of((update) => {
-      if (update.docChanged && onQueryChange) {
-        clearTimeout(syncTimer)
-        syncTimer = setTimeout(() => {
-          onQueryChange(update.state.doc.toString())
-        }, 500)
+      if (update.docChanged) {
+        const content = update.state.doc.toString()
+        if (onQueryChange) {
+          clearTimeout(syncTimer)
+          syncTimer = setTimeout(() => {
+            onQueryChange(content)
+          }, 500)
+        }
+        // Auto-save to file
+        if (filePath) {
+          clearTimeout(autoSaveTimer)
+          autoSaveTimer = setTimeout(() => {
+            window.api.writeQueryFile(filePath!, content).catch(() => {})
+          }, 1000)
+        }
       }
     })
 
+    // Load initial content from file or use provided query
+    let initialDoc = initialQuery || ''
+    if (filePath) {
+      try {
+        const file = await window.api.readQueryFile(filePath)
+        initialDoc = file.content
+      } catch {
+        initialDoc = initialQuery || ''
+      }
+    }
+    if (!initialDoc) initialDoc = 'SELECT * FROM '
+
     const startState = EditorState.create({
-      doc: initialQuery || 'SELECT * FROM ',
+      doc: initialDoc,
       extensions: [
         basicSetup,
         sqlCompartment.of(buildSqlExtension()),

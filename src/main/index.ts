@@ -6,6 +6,7 @@ import { connectToDatabase, disconnectDatabase, getConnection, isConnected, getC
 import { performance } from 'perf_hooks'
 import { initHistory, saveHistory, addEntry, getEntries, searchEntries, clearEntries } from './history'
 import { initConnections, saveConnections, getAllConnections, addConnection, updateConnection, deleteConnection, duplicateConnection } from './connections'
+import * as queryFiles from './queryFiles'
 import type { UndoData, UndoOperation, StatementWithMeta } from '../shared/types'
 
 interface FilterParam {
@@ -112,6 +113,13 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
+  })
+
+  // Prevent Cmd+W from closing the window — let the renderer handle it as "close tab"
+  mainWindow.webContents.on('before-input-event', (_event, input) => {
+    if ((input.meta || input.control) && input.key === 'w') {
+      _event.preventDefault()
+    }
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -454,6 +462,55 @@ function registerIpcHandlers(): void {
     return duplicateConnection(params.id)
   })
 
+  // --- Query files IPC handlers ---
+
+  ipcMain.handle('queries:list-files', async () => {
+    return queryFiles.listFiles()
+  })
+
+  ipcMain.handle('queries:read-file', async (_event, params: { filePath: string }) => {
+    return queryFiles.readFile(params.filePath)
+  })
+
+  ipcMain.handle('queries:write-file', async (_event, params: { filePath: string; content: string }) => {
+    return queryFiles.writeFile(params.filePath, params.content)
+  })
+
+  ipcMain.handle('queries:create-file', async (_event, params?: { name?: string }) => {
+    return queryFiles.createFile(params?.name)
+  })
+
+  ipcMain.handle('queries:delete-file', async (_event, params: { filePath: string }) => {
+    return queryFiles.deleteFile(params.filePath)
+  })
+
+  ipcMain.handle('queries:rename-file', async (_event, params: { oldPath: string; newName: string }) => {
+    return queryFiles.renameFile(params.oldPath, params.newName)
+  })
+
+  ipcMain.handle('queries:get-directory', async () => {
+    return { directory: queryFiles.getQueriesDir() }
+  })
+
+  ipcMain.handle('queries:set-directory', async (_event, params: { directory: string }) => {
+    queryFiles.setQueriesDir(params.directory)
+    return { success: true }
+  })
+
+  ipcMain.handle('queries:pick-directory', async () => {
+    const { dialog } = await import('electron')
+    const result = await dialog.showOpenDialog({
+      properties: ['openDirectory', 'createDirectory'],
+      title: 'Choose Queries Directory'
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return { directory: result.filePaths[0] }
+  })
+
+  ipcMain.handle('queries:reveal-in-finder', async (_event, params: { filePath: string }) => {
+    queryFiles.revealInFinder(params.filePath)
+  })
+
   ipcMain.handle('history:execute-undo', async (_event, params: { operations: Array<{ reverseSql: string; reverseParams: unknown[] }> }) => {
     const combinedSql = params.operations.map((o) => inlineParams(o.reverseSql, o.reverseParams)).join(';\n')
     const start = performance.now()
@@ -521,6 +578,7 @@ function registerIpcHandlers(): void {
 app.whenReady().then(() => {
   initHistory()
   initConnections()
+  queryFiles.initQueryFiles()
   registerIpcHandlers()
   createWindow()
 

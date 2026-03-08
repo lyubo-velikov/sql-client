@@ -145,6 +145,19 @@ export interface DbApi {
   deleteConnection(id: string): Promise<boolean>
 
   duplicateConnection(id: string): Promise<import('../shared/types').SavedConnection | null>
+
+  // Query files
+  listQueryFiles(): Promise<import('../shared/types').QueryFile[]>
+  readQueryFile(filePath: string): Promise<{ content: string; mtime: number }>
+  writeQueryFile(filePath: string, content: string): Promise<{ success: boolean; mtime: number }>
+  createQueryFile(name?: string): Promise<{ filePath: string; name: string }>
+  deleteQueryFile(filePath: string): Promise<boolean>
+  renameQueryFile(oldPath: string, newName: string): Promise<{ newPath: string }>
+  getQueriesDirectory(): Promise<{ directory: string }>
+  setQueriesDirectory(directory: string): Promise<{ success: boolean }>
+  pickQueriesDirectory(): Promise<{ directory: string } | null>
+  revealInFinder(filePath: string): Promise<void>
+  onFilesChanged(callback: () => void): () => void
 }
 
 declare global {

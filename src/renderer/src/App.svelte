@@ -12,6 +12,7 @@
   import SchemaView from './components/schema/SchemaView.svelte'
   import Notifications from './components/Notifications.svelte'
   import HistoryDrawer from './components/history/HistoryDrawer.svelte'
+  import { queryFilesStore } from './stores/queryFiles.svelte'
 
   let connectionManagerOpen = $state(false)
   let sidebarCollapsed = $state(false)
@@ -21,6 +22,35 @@
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'h') {
       e.preventDefault()
       showHistory = !showHistory
+      return
+    }
+
+    // Cmd+W to close active tab (prevent window close)
+    if ((e.metaKey || e.ctrlKey) && e.key === 'w') {
+      e.preventDefault()
+      if (tabStore.activeTabId) {
+        tabStore.closeTab(tabStore.activeTabId)
+      }
+      return
+    }
+
+    // Cmd+N to create new query file
+    if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
+      e.preventDefault()
+      createNewQueryFile()
+      return
+    }
+
+    // Cmd+S to save active query tab to file
+    if ((e.metaKey || e.ctrlKey) && e.key === 's' && !e.shiftKey) {
+      // Only handle for query tabs — TableView handles its own Cmd+S
+      const tab = tabStore.activeTab
+      if (tab?.type === 'query' && tab.filePath) {
+        e.preventDefault()
+        // Force immediate save (editor has auto-save but this is explicit)
+        // The editor's auto-save handles this, but we can also do nothing here
+        // since the editor debounce is short enough. The editor handles Cmd+S internally.
+      }
       return
     }
 
@@ -54,8 +84,19 @@
     }
   }
 
+  async function createNewQueryFile() {
+    const result = await queryFilesStore.createFile()
+    tabStore.openFile(result.filePath, result.name)
+  }
+
   onMount(async () => {
-    tabStore.openDefaultTab()
+    // Load query files
+    await queryFilesStore.load()
+
+    // Open default tab if none exist — create a file-backed query
+    if (tabStore.tabs.length === 0) {
+      await createNewQueryFile()
+    }
 
     // Load saved connections
     await savedConnectionsStore.load()
@@ -110,7 +151,7 @@
       {#if tabStore.activeTab}
         {#if tabStore.activeTab.type === 'query'}
           {#key tabStore.activeTabId}
-            <QueryEditor initialQuery={tabStore.activeTab.query ?? ''} onQueryChange={handleQueryChange} onToggleHistory={() => { showHistory = !showHistory }} />
+            <QueryEditor initialQuery={tabStore.activeTab.query ?? ''} filePath={tabStore.activeTab.filePath} onQueryChange={handleQueryChange} onToggleHistory={() => { showHistory = !showHistory }} />
           {/key}
         {:else if tabStore.activeTab.type === 'table'}
           <TableView schema={tabStore.activeTab.schema ?? 'public'} table={tabStore.activeTab.table ?? ''} />

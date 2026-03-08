@@ -76,7 +76,23 @@ const api = {
     ipcRenderer.invoke('connections:delete', { id }),
 
   duplicateConnection: (id: string) =>
-    ipcRenderer.invoke('connections:duplicate', { id })
+    ipcRenderer.invoke('connections:duplicate', { id }),
+
+  // Query files
+  listQueryFiles: () => ipcRenderer.invoke('queries:list-files'),
+  readQueryFile: (filePath: string) => ipcRenderer.invoke('queries:read-file', { filePath }),
+  writeQueryFile: (filePath: string, content: string) => ipcRenderer.invoke('queries:write-file', { filePath, content }),
+  createQueryFile: (name?: string) => ipcRenderer.invoke('queries:create-file', name ? { name } : undefined),
+  deleteQueryFile: (filePath: string) => ipcRenderer.invoke('queries:delete-file', { filePath }),
+  renameQueryFile: (oldPath: string, newName: string) => ipcRenderer.invoke('queries:rename-file', { oldPath, newName }),
+  getQueriesDirectory: () => ipcRenderer.invoke('queries:get-directory'),
+  setQueriesDirectory: (directory: string) => ipcRenderer.invoke('queries:set-directory', { directory }),
+  pickQueriesDirectory: () => ipcRenderer.invoke('queries:pick-directory'),
+  revealInFinder: (filePath: string) => ipcRenderer.invoke('queries:reveal-in-finder', { filePath }),
+  onFilesChanged: (callback: () => void) => {
+    ipcRenderer.on('queries:files-changed', callback)
+    return () => { ipcRenderer.removeListener('queries:files-changed', callback) }
+  }
 }
 
 contextBridge.exposeInMainWorld('api', api)

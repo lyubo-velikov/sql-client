@@ -1,9 +1,8 @@
 <script lang="ts">
   import { tabStore } from '../../stores/tabs.svelte'
+  import { queryFilesStore } from '../../stores/queryFiles.svelte'
 
   let { sidebarCollapsed = false, onToggleHistory } = $props<{ sidebarCollapsed?: boolean; onToggleHistory?: () => void }>()
-
-  let queryCounter = $state(1)
 
   function getTabIcon(type: string): { viewBox: string; paths: string } {
     switch (type) {
@@ -26,13 +25,9 @@
     }
   }
 
-  function addQueryTab(): void {
-    queryCounter++
-    tabStore.addTab({
-      type: 'query',
-      title: `Query ${queryCounter}`,
-      query: ''
-    })
+  async function addQueryTab(): Promise<void> {
+    const result = await queryFilesStore.createFile()
+    tabStore.openFile(result.filePath, result.name)
   }
 
   function handleTabMouseDown(e: MouseEvent, tabId: string): void {

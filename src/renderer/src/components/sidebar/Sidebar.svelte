@@ -2,6 +2,7 @@
   import { connectionStore } from '../../stores/connection.svelte'
   import { tabStore } from '../../stores/tabs.svelte'
   import ThemeToggle from '../ThemeToggle.svelte'
+  import FileBrowser from './FileBrowser.svelte'
 
   let { onOpenConnectionDialog, collapsed = $bindable(false) } = $props<{ onOpenConnectionDialog: () => void; collapsed?: boolean }>()
 
@@ -164,6 +165,9 @@
         </svg>
       </button>
     </div>
+
+    <!-- Query files browser -->
+    <FileBrowser />
 
     <!-- Search -->
     <div class="px-3 py-2">
