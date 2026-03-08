@@ -6,6 +6,7 @@
   import { notificationStore } from '../../stores/notifications.svelte'
   import { buildUpdateStatements, buildInsertStatements, buildDeleteStatements } from '../../utils/sqlBuilder'
   import { connectionStore } from '../../stores/connection.svelte'
+  import RowDetailSidebar from './RowDetailSidebar.svelte'
 
   let { schema, table }: { schema: string; table: string } = $props()
 
@@ -21,6 +22,13 @@
   let columnTypes = $state<Map<string, string>>(new Map())
   let primaryKeyColumns = $state<string[]>([])
   let saving = $state(false)
+  let sidebarOpen = $state(false)
+  let selectedRowIndex = $state<number | null>(null)
+  let selectedRowData = $derived(
+    selectedRowIndex !== null && selectedRowIndex >= 0 && selectedRowIndex < rows.length
+      ? rows[selectedRowIndex]
+      : null
+  )
 
   // Change buffer for tracking edits
   const changeBuffer = createChangeBuffer()
@@ -284,6 +292,26 @@
     }
   }
 
+  function handleRowSelect(idx: number | null, _row: Record<string, unknown> | null) {
+    selectedRowIndex = idx
+    if (idx !== null) {
+      sidebarOpen = true
+    }
+  }
+
+  function handleSidebarClose() {
+    sidebarOpen = false
+  }
+
+  function handleSidebarNavigate(direction: 'prev' | 'next') {
+    if (selectedRowIndex === null) return
+    const newIndex = direction === 'prev' ? selectedRowIndex - 1 : selectedRowIndex + 1
+    if (newIndex >= 0 && newIndex < rows.length) {
+      selectedRowIndex = newIndex
+      selectedRowData = rows[newIndex]
+    }
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     if ((e.metaKey || e.ctrlKey) && e.key === 's') {
       e.preventDefault()
@@ -323,6 +351,8 @@
     error = null
     primaryKeyColumns = []
     changeBuffer.clearAll()
+    sidebarOpen = false
+    selectedRowIndex = null
     if (_connected) {
       untrack(() => {
         fetchSchema()
@@ -563,27 +593,43 @@
     </div>
   {/if}
 
-  <!-- Data grid -->
-  <div class="flex-1 min-h-0">
-    <DataGrid
-      {rows}
+  <!-- Data grid + sidebar -->
+  <div class="flex flex-1 min-h-0">
+    <div class="flex-1 min-w-0">
+      <DataGrid
+        {rows}
+        {columns}
+        {totalCount}
+        {page}
+        {pageSize}
+        {loading}
+        onPageChange={handlePageChange}
+        onPageSizeChange={handlePageSizeChange}
+        onSort={handleSort}
+        {sortColumn}
+        {sortDirection}
+        {editable}
+        {primaryKeyColumns}
+        {changeBuffer}
+        onCellEdit={handleCellEdit}
+        onDeleteRow={handleDeleteRow}
+        onAddRow={handleAddRow}
+        insertedRows={changeBuffer.inserts}
+        onRowSelect={handleRowSelect}
+        selectedRowIndex={sidebarOpen ? selectedRowIndex : null}
+      />
+    </div>
+    <RowDetailSidebar
+      row={selectedRowData}
+      rowIndex={selectedRowIndex ?? -1}
       {columns}
-      {totalCount}
-      {page}
-      {pageSize}
-      {loading}
-      onPageChange={handlePageChange}
-      onPageSizeChange={handlePageSizeChange}
-      onSort={handleSort}
-      {sortColumn}
-      {sortDirection}
+      open={sidebarOpen}
       {editable}
       {primaryKeyColumns}
       {changeBuffer}
       onCellEdit={handleCellEdit}
-      onDeleteRow={handleDeleteRow}
-      onAddRow={handleAddRow}
-      insertedRows={changeBuffer.inserts}
+      onClose={handleSidebarClose}
+      onNavigate={handleSidebarNavigate}
     />
   </div>
 </div>

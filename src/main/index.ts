@@ -7,6 +7,8 @@ import { performance } from 'perf_hooks'
 import { initHistory, saveHistory, addEntry, getEntries, searchEntries, clearEntries } from './history'
 import { initConnections, saveConnections, getAllConnections, addConnection, updateConnection, deleteConnection, duplicateConnection } from './connections'
 import * as queryFiles from './queryFiles'
+import * as ai from './ai'
+import { initLogger } from './logger'
 import type { UndoData, UndoOperation, StatementWithMeta } from '../shared/types'
 
 interface FilterParam {
@@ -511,6 +513,85 @@ function registerIpcHandlers(): void {
     queryFiles.revealInFinder(params.filePath)
   })
 
+  // --- AI Assistant IPC handlers ---
+
+  ipcMain.handle('ai:has-api-key', async () => {
+    return { hasKey: ai.hasApiKey() }
+  })
+
+  ipcMain.handle('ai:set-api-key', async (_event, params: { key: string }) => {
+    ai.setApiKey(params.key)
+    return { success: true }
+  })
+
+  ipcMain.handle('ai:get-model', async () => {
+    return { model: ai.getModel() }
+  })
+
+  ipcMain.handle('ai:set-model', async (_event, params: { model: string }) => {
+    ai.setModel(params.model)
+    return { success: true }
+  })
+
+  ipcMain.handle('ai:get-provider', async () => {
+    return { provider: ai.getProvider() }
+  })
+
+  ipcMain.handle('ai:set-provider', async (_event, params: { provider: 'api' | 'claude-cli' }) => {
+    ai.setProvider(params.provider)
+    return { success: true }
+  })
+
+  ipcMain.handle('ai:send-message', async (event, params: {
+    messages: Array<{ role: 'user' | 'assistant'; content: string }>
+    schemaContext: string
+    model: string
+  }) => {
+    const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    try {
+      ai.streamMessage(
+        params,
+        messageId,
+        (content) => {
+          if (!event.sender.isDestroyed()) {
+            event.sender.send('ai:stream-chunk', { messageId, content, done: false })
+          }
+        },
+        () => {
+          if (!event.sender.isDestroyed()) {
+            event.sender.send('ai:stream-chunk', { messageId, content: '', done: true })
+          }
+        },
+        (error) => {
+          if (!event.sender.isDestroyed()) {
+            event.sender.send('ai:stream-chunk', { messageId, content: '', done: true, error })
+          }
+        }
+      )
+      return { success: true, messageId }
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle('ai:stop-stream', async () => {
+    ai.stopStream()
+    return { success: true }
+  })
+
+  ipcMain.handle('ai:list-conversations', async () => {
+    return ai.getConversations()
+  })
+
+  ipcMain.handle('ai:save-conversation', async (_event, params: { conversation: import('../shared/types').AiConversation }) => {
+    ai.saveConversation(params.conversation)
+    return { success: true }
+  })
+
+  ipcMain.handle('ai:delete-conversation', async (_event, params: { id: string }) => {
+    return ai.deleteConversation(params.id)
+  })
+
   ipcMain.handle('history:execute-undo', async (_event, params: { operations: Array<{ reverseSql: string; reverseParams: unknown[] }> }) => {
     const combinedSql = params.operations.map((o) => inlineParams(o.reverseSql, o.reverseParams)).join(';\n')
     const start = performance.now()
@@ -576,9 +657,11 @@ function registerIpcHandlers(): void {
 }
 
 app.whenReady().then(() => {
+  initLogger()
   initHistory()
   initConnections()
   queryFiles.initQueryFiles()
+  ai.initAi()
   registerIpcHandlers()
   createWindow()
 
@@ -596,6 +679,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', async () => {
   saveHistory()
   saveConnections()
+  ai.saveAiSettings()
   if (isConnected()) {
     await disconnectDatabase()
   }

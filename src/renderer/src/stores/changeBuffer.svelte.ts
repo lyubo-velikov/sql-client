@@ -8,6 +8,7 @@ export interface CellEdit {
 export interface RowInsert {
   tempId: string
   values: Record<string, unknown>
+  touchedColumns: Set<string>
 }
 
 export function createChangeBuffer() {
@@ -34,6 +35,7 @@ export function createChangeBuffer() {
     const row = inserts.find((r) => r.tempId === tempId)
     if (row) {
       row.values[column] = value
+      row.touchedColumns.add(column)
       inserts = [...inserts]
     }
   }
@@ -41,13 +43,19 @@ export function createChangeBuffer() {
   function addInsertRow(columns: string[]): RowInsert {
     const row: RowInsert = {
       tempId: `new-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      values: {}
+      values: {},
+      touchedColumns: new Set()
     }
     for (const col of columns) {
       row.values[col] = null
     }
     inserts = [...inserts, row]
     return row
+  }
+
+  function isInsertColumnTouched(tempId: string, column: string): boolean {
+    const row = inserts.find((r) => r.tempId === tempId)
+    return row?.touchedColumns.has(column) ?? false
   }
 
   function removeInsertRow(tempId: string) {
@@ -99,6 +107,7 @@ export function createChangeBuffer() {
     setCellEdit,
     setInsertCellValue,
     addInsertRow,
+    isInsertColumnTouched,
     removeInsertRow,
     markRowDeleted,
     unmarkRowDeleted,

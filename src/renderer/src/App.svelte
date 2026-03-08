@@ -12,13 +12,22 @@
   import SchemaView from './components/schema/SchemaView.svelte'
   import Notifications from './components/Notifications.svelte'
   import HistoryDrawer from './components/history/HistoryDrawer.svelte'
+  import AiAssistant from './components/ai/AiAssistant.svelte'
   import { queryFilesStore } from './stores/queryFiles.svelte'
+  import { assistantStore } from './stores/assistant.svelte'
 
   let connectionManagerOpen = $state(false)
   let sidebarCollapsed = $state(false)
   let showHistory = $state(false)
+  let showAiAssistant = $state(false)
 
   function handleGlobalKeydown(e: KeyboardEvent) {
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'a') {
+      e.preventDefault()
+      showAiAssistant = !showAiAssistant
+      return
+    }
+
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'h') {
       e.preventDefault()
       showHistory = !showHistory
@@ -84,8 +93,9 @@
   }
 
   onMount(async () => {
-    // Load query files
+    // Load query files and AI assistant
     await queryFilesStore.load()
+    assistantStore.load()
 
     // Open default tab if none exist — create a file-backed query
     if (tabStore.tabs.length === 0) {
@@ -138,7 +148,7 @@
   <!-- Main content area -->
   <div class="flex flex-col flex-1 min-w-0">
     <!-- Tab bar -->
-    <TabBar {sidebarCollapsed} onToggleHistory={() => { showHistory = !showHistory }} />
+    <TabBar {sidebarCollapsed} onToggleHistory={() => { showHistory = !showHistory }} onToggleAi={() => { showAiAssistant = !showAiAssistant }} />
 
     <!-- Tab content — all tabs stay mounted, only active one is visible -->
     <div class="flex-1 overflow-hidden relative">
@@ -146,7 +156,20 @@
         {@const isActive = tab.id === tabStore.activeTabId}
         <div class="absolute inset-0" style:display={isActive ? '' : 'none'}>
           {#if tab.type === 'query'}
-            <QueryEditor initialQuery={tab.query ?? ''} filePath={tab.filePath} onQueryChange={(q) => tabStore.updateTab(tab.id, { query: q })} onToggleHistory={() => { showHistory = !showHistory }} />
+            <QueryEditor
+              initialQuery={tab.query ?? ''}
+              filePath={tab.filePath}
+              onQueryChange={(q) => tabStore.updateTab(tab.id, { query: q })}
+              onToggleHistory={() => { showHistory = !showHistory }}
+              onAskAi={(params) => {
+                showAiAssistant = true
+                if (params.type === 'fix-error') {
+                  assistantStore.sendMessage(`Fix this SQL query error:\n\n\`\`\`sql\n${params.query}\n\`\`\`\n\nError: ${params.error}`)
+                } else if (params.type === 'explain') {
+                  assistantStore.sendMessage(`Explain this SQL query:\n\n\`\`\`sql\n${params.query}\n\`\`\``)
+                }
+              }}
+            />
           {:else if tab.type === 'table'}
             <TableView schema={tab.schema ?? 'public'} table={tab.table ?? ''} />
           {:else if tab.type === 'schema'}
@@ -172,6 +195,9 @@
     <!-- History drawer -->
     <HistoryDrawer bind:open={showHistory} />
   </div>
+
+  <!-- AI Assistant right sidebar -->
+  <AiAssistant bind:open={showAiAssistant} />
 </div>
 
 <!-- Connection manager modal -->

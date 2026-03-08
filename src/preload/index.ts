@@ -92,6 +92,28 @@ const api = {
   onFilesChanged: (callback: () => void) => {
     ipcRenderer.on('queries:files-changed', callback)
     return () => { ipcRenderer.removeListener('queries:files-changed', callback) }
+  },
+
+  // AI Assistant
+  hasAiApiKey: () => ipcRenderer.invoke('ai:has-api-key'),
+  setAiApiKey: (key: string) => ipcRenderer.invoke('ai:set-api-key', { key }),
+  getAiModel: () => ipcRenderer.invoke('ai:get-model'),
+  setAiModel: (model: string) => ipcRenderer.invoke('ai:set-model', { model }),
+  getAiProvider: () => ipcRenderer.invoke('ai:get-provider'),
+  setAiProvider: (provider: 'api' | 'claude-cli') => ipcRenderer.invoke('ai:set-provider', { provider }),
+  sendAiMessage: (params: {
+    messages: Array<{ role: 'user' | 'assistant'; content: string }>
+    schemaContext: string
+    model: string
+  }) => ipcRenderer.invoke('ai:send-message', params),
+  stopAiStream: () => ipcRenderer.invoke('ai:stop-stream'),
+  listAiConversations: () => ipcRenderer.invoke('ai:list-conversations'),
+  saveAiConversation: (conversation: any) => ipcRenderer.invoke('ai:save-conversation', { conversation }),
+  deleteAiConversation: (id: string) => ipcRenderer.invoke('ai:delete-conversation', { id }),
+  onAiStreamChunk: (callback: (data: { messageId: string; content: string; done: boolean; error?: string }) => void) => {
+    const handler = (_event: any, data: any) => callback(data)
+    ipcRenderer.on('ai:stream-chunk', handler)
+    return () => { ipcRenderer.removeListener('ai:stream-chunk', handler) }
   }
 }
 

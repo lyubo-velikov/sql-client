@@ -158,6 +158,24 @@ export interface DbApi {
   pickQueriesDirectory(): Promise<{ directory: string } | null>
   revealInFinder(filePath: string): Promise<void>
   onFilesChanged(callback: () => void): () => void
+
+  // AI Assistant
+  hasAiApiKey(): Promise<{ hasKey: boolean }>
+  setAiApiKey(key: string): Promise<{ success: boolean }>
+  getAiModel(): Promise<{ model: string }>
+  setAiModel(model: string): Promise<{ success: boolean }>
+  getAiProvider(): Promise<{ provider: 'api' | 'claude-cli' }>
+  setAiProvider(provider: 'api' | 'claude-cli'): Promise<{ success: boolean }>
+  sendAiMessage(params: {
+    messages: Array<{ role: 'user' | 'assistant'; content: string }>
+    schemaContext: string
+    model: string
+  }): Promise<{ success: boolean; messageId?: string; error?: string }>
+  stopAiStream(): Promise<{ success: boolean }>
+  listAiConversations(): Promise<import('../shared/types').AiConversation[]>
+  saveAiConversation(conversation: import('../shared/types').AiConversation): Promise<{ success: boolean }>
+  deleteAiConversation(id: string): Promise<boolean>
+  onAiStreamChunk(callback: (data: { messageId: string; content: string; done: boolean; error?: string }) => void): () => void
 }
 
 declare global {

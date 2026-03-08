@@ -19,7 +19,9 @@
     onCellEdit = undefined,
     onDeleteRow = undefined,
     onAddRow = undefined,
-    insertedRows = []
+    insertedRows = [],
+    onRowSelect = undefined,
+    selectedRowIndex = null
   }: {
     rows: Record<string, unknown>[]
     columns: string[]
@@ -39,10 +41,20 @@
     onDeleteRow?: (rowIndex: number) => void
     onAddRow?: () => void
     insertedRows?: RowInsert[]
+    onRowSelect?: (rowIndex: number | null, row: Record<string, unknown> | null) => void
+    selectedRowIndex?: number | null
   } = $props()
 
-  let selectedRow = $state<number | null>(null)
+  let internalSelectedRow = $state<number | null>(null)
+  let selectedRow = $derived(selectedRowIndex !== null && selectedRowIndex !== undefined ? selectedRowIndex : internalSelectedRow)
   let copiedCell = $state<{ row: number; col: string } | null>(null)
+
+  function selectRow(idx: number | null) {
+    internalSelectedRow = idx
+    if (onRowSelect) {
+      onRowSelect(idx, idx !== null ? rows[idx] ?? null : null)
+    }
+  }
 
   // Editing state
   let editingCell = $state<{ row: number; col: string; isInsert?: boolean; tempId?: string } | null>(null)
@@ -279,7 +291,7 @@
                  selectedRow === rowIndex ? 'bg-surface-active' :
                  rowIndex % 2 === 0 ? 'bg-surface-primary' : 'bg-surface-secondary/30'}
                 {isDeleted ? '' : 'hover:bg-surface-hover'}"
-              onclick={() => selectedRow = selectedRow === rowIndex ? null : rowIndex}
+              onclick={() => selectRow(selectedRow === rowIndex ? null : rowIndex)}
             >
               <!-- Row number / status indicator -->
               <td class="datagrid-td text-center w-12 select-none text-[11px]
@@ -348,6 +360,7 @@
                 <span title="New row">+</span>
               </td>
               {#each columns as col}
+                {@const isTouched = changeBuffer?.isInsertColumnTouched(insertRow.tempId, col) ?? false}
                 {@const value = insertRow.values[col]}
                 {@const cellType = getCellType(value)}
                 {@const isEditing = editingCell?.isInsert && editingCell?.tempId === insertRow.tempId && editingCell?.col === col}
@@ -365,6 +378,8 @@
                       onblur={commitEdit}
                       autofocus
                     />
+                  {:else if !isTouched}
+                    <span class="italic text-text-muted text-xs">DEFAULT</span>
                   {:else if cellType === 'null'}
                     <span class="italic text-text-muted text-xs">NULL</span>
                   {:else}

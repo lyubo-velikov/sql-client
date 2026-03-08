@@ -99,7 +99,9 @@
 
 {#if collapsed}
   <!-- Collapsed sidebar -->
-  <div class="flex flex-col items-center pt-14 pb-3 w-12 bg-surface-secondary border-r border-border-primary shrink-0">
+  <div class="flex flex-col items-center pb-3 w-12 bg-surface-secondary border-r border-border-primary shrink-0">
+    <!-- Drag region above traffic lights -->
+    <div class="w-full h-14 shrink-0 app-drag-region"></div>
     <!-- Expand button -->
     <button
       onclick={() => (collapsed = false)}
@@ -138,8 +140,10 @@
 {:else}
   <!-- Expanded sidebar -->
   <div class="flex flex-col w-[260px] bg-surface-secondary border-r border-border-primary shrink-0 select-none">
-    <!-- Header: drag region + collapse -->
-    <div class="flex items-center justify-between px-4 pt-10 pb-2">
+    <!-- Drag region covering traffic lights area -->
+    <div class="w-full h-10 shrink-0 app-drag-region"></div>
+    <!-- Header -->
+    <div class="flex items-center justify-between px-4 pb-2">
       <button
         class="flex items-center gap-2 hover:opacity-80 transition-opacity"
         onclick={onOpenConnectionDialog}
@@ -305,6 +309,12 @@
     </div>
   </div>
 {/if}
+
+<style>
+  .app-drag-region {
+    -webkit-app-region: drag;
+  }
+</style>
 
 <!-- Context menu -->
 {#if contextMenu}

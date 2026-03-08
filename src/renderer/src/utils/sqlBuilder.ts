@@ -94,7 +94,8 @@ export function buildInsertStatements(
   inserts: RowInsert[]
 ): StatementWithMeta[] {
   return inserts.map((insert) => {
-    const cols = Object.keys(insert.values)
+    // Only include columns the user explicitly edited — omit untouched columns so DB defaults apply
+    const cols = Object.keys(insert.values).filter((c) => insert.touchedColumns.has(c))
     const params = cols.map((c) => insert.values[c])
     const placeholders = cols.map((_, i) => `$${i + 1}`)
 

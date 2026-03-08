@@ -55,6 +55,22 @@ export const CONNECTION_COLORS = [
   '#f97316', // orange
 ]
 
+export interface AiMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  timestamp: number
+  model?: string
+}
+
+export interface AiConversation {
+  id: string
+  title: string
+  messages: AiMessage[]
+  createdAt: number
+  updatedAt: number
+}
+
 export interface StatementWithMeta {
   sql: string
   params: unknown[]

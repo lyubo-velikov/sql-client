@@ -6,14 +6,16 @@
   import { oneDark } from '@codemirror/theme-one-dark'
   import { basicSetup } from 'codemirror'
   import DataGrid from '../grid/DataGrid.svelte'
+  import RowDetailSidebar from '../grid/RowDetailSidebar.svelte'
   import { historyStore } from '../../stores/history.svelte'
   import { connectionStore } from '../../stores/connection.svelte'
 
-  let { initialQuery = '', filePath, onQueryChange, onToggleHistory }: {
+  let { initialQuery = '', filePath, onQueryChange, onToggleHistory, onAskAi }: {
     initialQuery?: string
     filePath?: string
     onQueryChange?: (query: string) => void
     onToggleHistory?: () => void
+    onAskAi?: (params: { type: 'fix-error' | 'explain'; query: string; error?: string }) => void
   } = $props()
 
   let autoSaveTimer: ReturnType<typeof setTimeout> | undefined
@@ -56,6 +58,30 @@
   let resultPageSize = $state(100)
   let resultSortColumn = $state<string | undefined>(undefined)
   let resultSortDirection = $state<'asc' | 'desc' | undefined>(undefined)
+
+  // Sidebar state
+  let sidebarOpen = $state(false)
+  let selectedRowIndex = $state<number | null>(null)
+  let selectedRowData = $state<Record<string, unknown> | null>(null)
+
+  function handleRowSelect(idx: number | null, row: Record<string, unknown> | null) {
+    selectedRowIndex = idx
+    selectedRowData = row
+    if (idx !== null) sidebarOpen = true
+  }
+
+  function handleSidebarClose() {
+    sidebarOpen = false
+  }
+
+  function handleSidebarNavigate(direction: 'prev' | 'next') {
+    if (selectedRowIndex === null) return
+    const newIndex = direction === 'prev' ? selectedRowIndex - 1 : selectedRowIndex + 1
+    if (newIndex >= 0 && newIndex < paginatedRows.length) {
+      selectedRowIndex = newIndex
+      selectedRowData = paginatedRows[newIndex]
+    }
+  }
 
   // For client-side pagination of query results
   let sortedRows = $derived.by(() => {
@@ -102,6 +128,9 @@
     resultPage = 1
     resultSortColumn = undefined
     resultSortDirection = undefined
+    sidebarOpen = false
+    selectedRowIndex = null
+    selectedRowData = null
 
     try {
       const result = await window.api.executeQuery(queryText)
@@ -329,6 +358,19 @@
 
       <div class="flex-1"></div>
 
+      {#if onAskAi}
+        <button
+          class="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-text-secondary hover:text-accent hover:bg-surface-hover transition-colors"
+          onclick={() => onAskAi?.({ type: 'explain', query: getEditorContent() })}
+          title="Explain query with AI"
+        >
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+          </svg>
+          Explain
+        </button>
+      {/if}
+
       <button
         class="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
         onclick={() => onToggleHistory?.()}
@@ -368,9 +410,21 @@
             <svg class="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
             </svg>
-            <div>
+            <div class="flex-1 min-w-0">
               <p class="text-red-400 text-sm font-medium mb-1">Query Error</p>
               <pre class="text-red-300/80 text-xs font-mono whitespace-pre-wrap leading-relaxed">{queryError}</pre>
+              {#if onAskAi}
+                <button
+                  class="mt-2 flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium
+                         bg-accent/20 text-accent hover:bg-accent/30 transition-colors"
+                  onclick={() => onAskAi?.({ type: 'fix-error', query: getEditorContent(), error: queryError ?? undefined })}
+                >
+                  <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                  </svg>
+                  Fix with AI
+                </button>
+              {/if}
             </div>
           </div>
         </div>
@@ -391,19 +445,31 @@
         </span>
       </div>
 
-      <!-- Results grid -->
-      <div class="flex-1 min-h-0">
-        <DataGrid
-          rows={paginatedRows}
+      <!-- Results grid + sidebar -->
+      <div class="flex flex-1 min-h-0">
+        <div class="flex-1 min-w-0">
+          <DataGrid
+            rows={paginatedRows}
+            columns={resultColumns}
+            totalCount={resultRows.length}
+            page={resultPage}
+            pageSize={resultPageSize}
+            loading={executing}
+            onPageChange={handleResultPageChange}
+            onSort={handleResultSort}
+            sortColumn={resultSortColumn}
+            sortDirection={resultSortDirection}
+            onRowSelect={handleRowSelect}
+            selectedRowIndex={sidebarOpen ? selectedRowIndex : null}
+          />
+        </div>
+        <RowDetailSidebar
+          row={selectedRowData}
+          rowIndex={selectedRowIndex ?? -1}
           columns={resultColumns}
-          totalCount={resultRows.length}
-          page={resultPage}
-          pageSize={resultPageSize}
-          loading={executing}
-          onPageChange={handleResultPageChange}
-          onSort={handleResultSort}
-          sortColumn={resultSortColumn}
-          sortDirection={resultSortDirection}
+          open={sidebarOpen}
+          onClose={handleSidebarClose}
+          onNavigate={handleSidebarNavigate}
         />
       </div>
     {:else}
