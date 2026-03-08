@@ -11,6 +11,7 @@
   import SchemaView from './components/schema/SchemaView.svelte'
 
   let connectionDialogOpen = $state(false)
+  let sidebarCollapsed = $state(false)
 
   function openConnectionDialog(): void {
     connectionDialogOpen = true
@@ -27,12 +28,12 @@
 
 <div class="h-screen w-screen bg-surface-primary text-text-primary flex overflow-hidden">
   <!-- Sidebar -->
-  <Sidebar onOpenConnectionDialog={openConnectionDialog} />
+  <Sidebar onOpenConnectionDialog={openConnectionDialog} bind:collapsed={sidebarCollapsed} />
 
   <!-- Main content area -->
   <div class="flex flex-col flex-1 min-w-0">
     <!-- Tab bar -->
-    <TabBar />
+    <TabBar {sidebarCollapsed} />
 
     <!-- Tab content -->
     <div class="flex-1 overflow-hidden">

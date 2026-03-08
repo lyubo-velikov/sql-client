@@ -1,8 +1,60 @@
 import { app, BrowserWindow, shell, ipcMain } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
+import type { Sql } from 'postgres'
 import { connectToDatabase, disconnectDatabase, getConnection, isConnected } from './db'
 import { performance } from 'perf_hooks'
+
+interface FilterParam {
+  column: string
+  operator: string
+  value: string
+}
+
+const ALLOWED_OPERATORS = ['=', '!=', '>', '<', '>=', '<=', 'LIKE', 'NOT LIKE', 'IS NULL', 'IS NOT NULL']
+
+function buildWhereClause(sql: Sql, filters?: FilterParam[]) {
+  if (!filters || filters.length === 0) return sql``
+
+  const conditions = filters
+    .filter((f) => ALLOWED_OPERATORS.includes(f.operator))
+    .map((f) => {
+      const col = sql(f.column)
+      switch (f.operator) {
+        case 'IS NULL':
+          return sql`${col} IS NULL`
+        case 'IS NOT NULL':
+          return sql`${col} IS NOT NULL`
+        case '=':
+          return sql`${col} = ${f.value}`
+        case '!=':
+          return sql`${col} != ${f.value}`
+        case '>':
+          return sql`${col} > ${f.value}`
+        case '<':
+          return sql`${col} < ${f.value}`
+        case '>=':
+          return sql`${col} >= ${f.value}`
+        case '<=':
+          return sql`${col} <= ${f.value}`
+        case 'LIKE':
+          return sql`${col} LIKE ${f.value}`
+        case 'NOT LIKE':
+          return sql`${col} NOT LIKE ${f.value}`
+        default:
+          return null
+      }
+    })
+    .filter(Boolean)
+
+  if (conditions.length === 0) return sql``
+
+  let combined = conditions[0]!
+  for (let i = 1; i < conditions.length; i++) {
+    combined = sql`${combined} AND ${conditions[i]!}`
+  }
+  return sql`WHERE ${combined}`
+}
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -100,31 +152,35 @@ function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('db:table-data', async (_event, params: { schema: string; table: string; page: number; pageSize: number; sortColumn?: string; sortDirection?: 'asc' | 'desc' }) => {
+  ipcMain.handle('db:table-data', async (_event, params: { schema: string; table: string; page: number; pageSize: number; sortColumn?: string; sortDirection?: 'asc' | 'desc'; filters?: FilterParam[] }) => {
     try {
       const sql = getConnection()
-      const { schema, table, page, pageSize, sortColumn, sortDirection } = params
+      const { schema, table, page, pageSize, sortColumn, sortDirection, filters } = params
       const offset = (page - 1) * pageSize
+      const where = buildWhereClause(sql, filters)
 
-      // Get total count
+      // Get total count (with filters applied)
       const countResult = await sql`
         SELECT count(*)::int as total_count
         FROM ${sql(schema)}.${sql(table)}
+        ${where}
       `
       const totalCount = countResult[0].total_count
 
-      // Get paginated data with optional sorting
+      // Get paginated data with optional sorting and filters
       let rows
       if (sortColumn) {
         const direction = sortDirection === 'desc' ? sql`DESC` : sql`ASC`
         rows = await sql`
           SELECT * FROM ${sql(schema)}.${sql(table)}
+          ${where}
           ORDER BY ${sql(sortColumn)} ${direction}
           LIMIT ${pageSize} OFFSET ${offset}
         `
       } else {
         rows = await sql`
           SELECT * FROM ${sql(schema)}.${sql(table)}
+          ${where}
           LIMIT ${pageSize} OFFSET ${offset}
         `
       }

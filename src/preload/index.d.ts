@@ -1,3 +1,9 @@
+export interface Filter {
+  column: string
+  operator: '=' | '!=' | '>' | '<' | '>=' | '<=' | 'LIKE' | 'NOT LIKE' | 'IS NULL' | 'IS NOT NULL'
+  value: string
+}
+
 export interface DbApi {
   connect(params: {
     host: string
@@ -35,6 +41,7 @@ export interface DbApi {
     pageSize: number
     sortColumn?: string
     sortDirection?: 'asc' | 'desc'
+    filters?: Filter[]
   }): Promise<{
     success: boolean
     data?: { rows: Record<string, unknown>[]; totalCount: number }

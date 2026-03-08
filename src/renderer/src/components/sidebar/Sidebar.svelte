@@ -3,10 +3,9 @@
   import { tabStore } from '../../stores/tabs.svelte'
   import ThemeToggle from '../ThemeToggle.svelte'
 
-  let { onOpenConnectionDialog } = $props<{ onOpenConnectionDialog: () => void }>()
+  let { onOpenConnectionDialog, collapsed = $bindable(false) } = $props<{ onOpenConnectionDialog: () => void; collapsed?: boolean }>()
 
   let searchQuery = $state('')
-  let collapsed = $state(false)
   let contextMenu = $state<{ x: number; y: number; schema: string; table: string } | null>(null)
 
   // Group tables by schema
@@ -47,7 +46,8 @@
       type: 'table',
       title: table,
       schema,
-      table
+      table,
+      preview: true
     })
   }
 
@@ -98,7 +98,7 @@
 
 {#if collapsed}
   <!-- Collapsed sidebar -->
-  <div class="flex flex-col items-center py-3 w-12 bg-surface-secondary border-r border-border-primary shrink-0">
+  <div class="flex flex-col items-center pt-14 pb-3 w-12 bg-surface-secondary border-r border-border-primary shrink-0">
     <!-- Expand button -->
     <button
       onclick={() => (collapsed = false)}

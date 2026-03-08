@@ -23,6 +23,7 @@ const api = {
     pageSize: number
     sortColumn?: string
     sortDirection?: 'asc' | 'desc'
+    filters?: Array<{ column: string; operator: string; value: string }>
   }) => ipcRenderer.invoke('db:table-data', params),
 
   executeQuery: (query: string) => ipcRenderer.invoke('db:execute-query', { query }),

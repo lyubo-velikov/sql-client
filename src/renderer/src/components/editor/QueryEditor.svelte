@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { EditorView, keymap, placeholder as cmPlaceholder } from '@codemirror/view'
-  import { EditorState } from '@codemirror/state'
+  import { EditorState, Prec } from '@codemirror/state'
   import { sql, PostgreSQL } from '@codemirror/lang-sql'
   import { oneDark } from '@codemirror/theme-one-dark'
   import { basicSetup } from 'codemirror'
@@ -169,15 +169,22 @@
   onMount(() => {
     if (!editorContainer) return
 
-    const runQueryKeymap = keymap.of([
+    const runQueryKeymap = Prec.highest(keymap.of([
       {
         key: 'Mod-Enter',
         run: () => {
           executeQuery()
           return true
         }
+      },
+      {
+        key: 'Alt-Enter',
+        run: () => {
+          executeQuery()
+          return true
+        }
       }
-    ])
+    ]))
 
     const customTheme = EditorView.theme({
       '&': {
@@ -260,7 +267,7 @@
             : 'bg-accent text-white hover:bg-accent-hover cursor-pointer'}"
         onclick={executeQuery}
         disabled={executing}
-        title="Execute query (Cmd+Enter)"
+        title="Execute query (Cmd+Enter / Alt+Enter)"
       >
         {#if executing}
           <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">

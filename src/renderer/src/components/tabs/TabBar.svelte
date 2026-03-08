@@ -1,6 +1,8 @@
 <script lang="ts">
   import { tabStore } from '../../stores/tabs.svelte'
 
+  let { sidebarCollapsed = false } = $props<{ sidebarCollapsed?: boolean }>()
+
   let queryCounter = $state(1)
 
   function getTabIcon(type: string): { viewBox: string; paths: string } {
@@ -47,7 +49,8 @@
   }
 </script>
 
-<div class="flex items-stretch h-9 bg-surface-primary border-b border-border-primary select-none app-drag-region">
+<div class="flex items-stretch bg-surface-primary border-b border-border-primary select-none app-drag-region
+            {sidebarCollapsed ? 'pl-5 h-10' : 'h-9'}">
   <!-- Tabs scroll container -->
   <div class="flex items-stretch flex-1 overflow-x-auto no-scrollbar">
     {#each tabStore.tabs as tab (tab.id)}
@@ -56,6 +59,7 @@
       <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
       <div
         onclick={() => tabStore.setActiveTab(tab.id)}
+        ondblclick={() => { if (tab.preview) tabStore.pinTab(tab.id) }}
         onmousedown={(e) => handleTabMouseDown(e, tab.id)}
         onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') tabStore.setActiveTab(tab.id) }}
         role="tab"
@@ -74,7 +78,7 @@
         </svg>
 
         <!-- Tab title -->
-        <span class="text-xs truncate">{tab.title}</span>
+        <span class="text-xs truncate {tab.preview ? 'italic opacity-70' : ''}">{tab.title}</span>
 
         <!-- Close button -->
         <button

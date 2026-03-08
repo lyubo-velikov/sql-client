@@ -5,6 +5,7 @@ export interface Tab {
   schema?: string
   table?: string
   query?: string
+  preview?: boolean
 }
 
 let tabs = $state<Tab[]>([])
@@ -27,10 +28,27 @@ function addTab(tab: Omit<Tab, 'id'>): string {
     }
   }
 
+  // For table tabs, reuse an existing preview tab instead of opening a new one
+  if (tab.type === 'table' && tab.preview) {
+    const previewTab = tabs.find((t) => t.type === 'table' && t.preview)
+    if (previewTab) {
+      Object.assign(previewTab, { title: tab.title, schema: tab.schema, table: tab.table })
+      activeTabId = previewTab.id
+      return previewTab.id
+    }
+  }
+
   const id = generateId()
   tabs.push({ ...tab, id })
   activeTabId = id
   return id
+}
+
+function pinTab(id: string): void {
+  const tab = tabs.find((t) => t.id === id)
+  if (tab && tab.preview) {
+    tab.preview = false
+  }
 }
 
 function closeTab(id: string): void {
@@ -84,5 +102,6 @@ export const tabStore = {
   closeTab,
   setActiveTab,
   updateTab,
+  pinTab,
   openDefaultTab
 }

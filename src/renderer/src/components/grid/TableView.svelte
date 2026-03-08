@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { untrack } from 'svelte'
   import DataGrid from './DataGrid.svelte'
+  import { tabStore } from '../../stores/tabs.svelte'
 
   let { schema, table }: { schema: string; table: string } = $props()
 
@@ -14,9 +16,84 @@
   let error = $state<string | null>(null)
   let columnTypes = $state<Map<string, string>>(new Map())
 
+  // Filter state
+  interface Filter {
+    column: string
+    operator: string
+    value: string
+  }
+
+  const OPERATORS = ['=', '!=', '>', '<', '>=', '<=', 'LIKE', 'NOT LIKE', 'IS NULL', 'IS NOT NULL']
+  const NULLARY_OPERATORS = ['IS NULL', 'IS NOT NULL']
+
+  let filters = $state<Filter[]>([])
+  let showFilters = $state(false)
+  let filterDebounceTimer: ReturnType<typeof setTimeout> | undefined
+
+  let activeFilterCount = $derived(
+    filters.filter((f) => NULLARY_OPERATORS.includes(f.operator) || f.value.trim() !== '').length
+  )
+
+  function getActiveFilters(): Filter[] {
+    return filters.filter((f) => NULLARY_OPERATORS.includes(f.operator) || f.value.trim() !== '')
+  }
+
+  function addFilter() {
+    filters.push({
+      column: columns[0] ?? '',
+      operator: '=',
+      value: ''
+    })
+    if (!showFilters) showFilters = true
+  }
+
+  function removeFilter(index: number) {
+    filters.splice(index, 1)
+    scheduleFilterRefetch()
+  }
+
+  function updateFilterColumn(index: number, column: string) {
+    filters[index].column = column
+    scheduleFilterRefetch()
+  }
+
+  function updateFilterOperator(index: number, operator: string) {
+    filters[index].operator = operator
+    if (NULLARY_OPERATORS.includes(operator)) {
+      filters[index].value = ''
+    }
+    scheduleFilterRefetch()
+  }
+
+  function updateFilterValue(index: number, value: string) {
+    filters[index].value = value
+    scheduleFilterRefetch()
+  }
+
+  function clearFilters() {
+    filters = []
+    scheduleFilterRefetch()
+  }
+
+  function scheduleFilterRefetch() {
+    clearTimeout(filterDebounceTimer)
+    filterDebounceTimer = setTimeout(() => {
+      page = 1
+      pinActiveTab()
+      fetchData()
+    }, 400)
+  }
+
+  // Version counter to discard stale responses
+  let fetchVersion = 0
+
   async function fetchSchema() {
+    const targetSchema = schema
+    const targetTable = table
     try {
-      const result = await window.api.getTableSchema(schema, table)
+      const result = await window.api.getTableSchema(targetSchema, targetTable)
+      // Discard if table changed while awaiting
+      if (schema !== targetSchema || table !== targetTable) return
       if (result.success && result.data) {
         columns = result.data.map((col) => col.column_name)
         const types = new Map<string, string>()
@@ -31,21 +108,27 @@
   }
 
   async function fetchData() {
+    const version = ++fetchVersion
     loading = true
     error = null
     try {
+      const active = getActiveFilters()
       const result = await window.api.getTableData({
         schema,
         table,
         page,
         pageSize,
         sortColumn,
-        sortDirection
+        sortDirection,
+        filters: active.length > 0
+          ? active.map((f) => ({ column: f.column, operator: f.operator, value: f.value }))
+          : undefined
       })
+      // Discard stale response
+      if (version !== fetchVersion) return
       if (result.success && result.data) {
         rows = result.data.rows
         totalCount = result.data.totalCount
-        // If columns not yet loaded from schema, derive from rows
         if (columns.length === 0 && rows.length > 0) {
           columns = Object.keys(rows[0])
         }
@@ -54,57 +137,72 @@
         rows = []
       }
     } catch (e) {
+      if (version !== fetchVersion) return
       error = e instanceof Error ? e.message : String(e)
       rows = []
     } finally {
-      loading = false
+      if (version === fetchVersion) loading = false
+    }
+  }
+
+  function pinActiveTab() {
+    if (tabStore.activeTabId) {
+      tabStore.pinTab(tabStore.activeTabId)
     }
   }
 
   function handlePageChange(newPage: number) {
     page = newPage
+    pinActiveTab()
   }
 
   function handleSort(column: string, direction: 'asc' | 'desc') {
     sortColumn = column
     sortDirection = direction
     page = 1
+    pinActiveTab()
   }
 
   function handlePageSizeChange(newSize: number) {
     pageSize = newSize
+    pinActiveTab()
   }
 
   function refresh() {
     fetchData()
   }
 
-  // Fetch schema and data whenever schema/table changes
+  // Reset everything and fetch fresh data when table changes.
+  // IMPORTANT: use untrack for fetchData/fetchSchema calls so this effect
+  // only tracks schema/table — not page/sort/filters read inside fetchData.
   $effect(() => {
-    // Capture the props to track them
     const _s = schema
     const _t = table
-    // Reset state
+    // Reset state (writes don't create tracking dependencies)
     page = 1
     sortColumn = undefined
     sortDirection = undefined
+    filters = []
+    showFilters = false
     rows = []
     columns = []
     totalCount = 0
     error = null
-    // Fetch
-    fetchSchema()
-    fetchData()
+    // Fetch with untrack so internal reads don't become deps of this effect
+    untrack(() => {
+      fetchSchema()
+      fetchData()
+    })
   })
 
-  // Refetch data when page, pageSize, sort changes
+  // Refetch when pagination or sort changes.
+  // untrack prevents schema/table/filters from becoming deps of this effect.
   $effect(() => {
-    // Track reactive deps
     const _p = page
     const _ps = pageSize
     const _sc = sortColumn
     const _sd = sortDirection
-    fetchData()
+    untrack(() => fetchData())
   })
 </script>
 
@@ -128,6 +226,26 @@
     <div class="flex-1"></div>
 
     <button
+      class="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs transition-colors
+        {showFilters || activeFilterCount > 0
+          ? 'bg-accent/15 text-accent hover:bg-accent/25'
+          : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover'}"
+      onclick={() => {
+        showFilters = !showFilters
+        if (showFilters && filters.length === 0) addFilter()
+      }}
+      title="Filter rows"
+    >
+      <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591l-5.432 5.432a2.25 2.25 0 00-.659 1.591v2.927a2.25 2.25 0 01-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 00-.659-1.591L3.659 7.409A2.25 2.25 0 013 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z" />
+      </svg>
+      Filter
+      {#if activeFilterCount > 0}
+        <span class="text-[10px] bg-accent/25 px-1 rounded">{activeFilterCount}</span>
+      {/if}
+    </button>
+
+    <button
       class="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs text-text-secondary
         hover:text-text-primary hover:bg-surface-hover transition-colors"
       onclick={refresh}
@@ -139,6 +257,97 @@
       Refresh
     </button>
   </div>
+
+  <!-- Filter bar -->
+  {#if showFilters}
+    <div class="bg-surface-secondary/60 border-b border-border-primary flex-shrink-0 px-3 py-2 flex flex-col gap-1.5">
+      {#each filters as filter, i}
+        <div class="flex items-center gap-2">
+          {#if i === 0}
+            <span class="text-text-muted text-[11px] w-12 text-right flex-shrink-0">WHERE</span>
+          {:else}
+            <span class="text-text-muted text-[11px] w-12 text-right flex-shrink-0">AND</span>
+          {/if}
+
+          <!-- Column select -->
+          <select
+            class="filter-select min-w-[120px]"
+            value={filter.column}
+            onchange={(e) => updateFilterColumn(i, (e.target as HTMLSelectElement).value)}
+          >
+            {#each columns as col}
+              <option value={col} selected={col === filter.column}>{col}</option>
+            {/each}
+          </select>
+
+          <!-- Operator select -->
+          <select
+            class="filter-select min-w-[100px]"
+            value={filter.operator}
+            onchange={(e) => updateFilterOperator(i, (e.target as HTMLSelectElement).value)}
+          >
+            {#each OPERATORS as op}
+              <option value={op} selected={op === filter.operator}>{op}</option>
+            {/each}
+          </select>
+
+          <!-- Value input (hidden for IS NULL / IS NOT NULL) -->
+          {#if !NULLARY_OPERATORS.includes(filter.operator)}
+            <input
+              type="text"
+              class="filter-input flex-1 min-w-[140px]"
+              placeholder={filter.operator === 'LIKE' || filter.operator === 'NOT LIKE' ? '%value%' : 'value'}
+              value={filter.value}
+              oninput={(e) => updateFilterValue(i, (e.target as HTMLInputElement).value)}
+              onkeydown={(e) => {
+                if (e.key === 'Enter') {
+                  clearTimeout(filterDebounceTimer)
+                  page = 1
+                  pinActiveTab()
+                  fetchData()
+                }
+              }}
+            />
+          {:else}
+            <div class="flex-1"></div>
+          {/if}
+
+          <!-- Remove button -->
+          <button
+            class="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded text-text-muted hover:text-red-400 hover:bg-red-900/20 transition-colors"
+            onclick={() => removeFilter(i)}
+            title="Remove filter"
+          >
+            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      {/each}
+
+      <!-- Filter actions -->
+      <div class="flex items-center gap-2 mt-0.5">
+        <div class="w-12 flex-shrink-0"></div>
+        <button
+          class="flex items-center gap-1 text-[11px] text-accent hover:text-accent-hover transition-colors"
+          onclick={addFilter}
+        >
+          <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+          </svg>
+          Add filter
+        </button>
+        {#if filters.length > 0}
+          <button
+            class="text-[11px] text-text-muted hover:text-text-secondary transition-colors"
+            onclick={clearFilters}
+          >
+            Clear all
+          </button>
+        {/if}
+      </div>
+    </div>
+  {/if}
 
   <!-- Error banner -->
   {#if error}
@@ -167,3 +376,40 @@
     />
   </div>
 </div>
+
+<style>
+  .filter-select {
+    background: var(--color-surface-tertiary);
+    border: 1px solid var(--color-border-primary);
+    border-radius: 4px;
+    padding: 3px 6px;
+    font-size: 11px;
+    color: var(--color-text-primary);
+    outline: none;
+    cursor: pointer;
+    font-family: var(--font-mono);
+  }
+
+  .filter-select:focus {
+    border-color: var(--color-accent);
+  }
+
+  .filter-input {
+    background: var(--color-surface-tertiary);
+    border: 1px solid var(--color-border-primary);
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 11px;
+    color: var(--color-text-primary);
+    outline: none;
+    font-family: var(--font-mono);
+  }
+
+  .filter-input:focus {
+    border-color: var(--color-accent);
+  }
+
+  .filter-input::placeholder {
+    color: var(--color-text-muted);
+  }
+</style>
