@@ -170,7 +170,8 @@ export interface DbApi {
     messages: Array<{ role: 'user' | 'assistant'; content: string }>
     schemaContext: string
     model: string
-  }): Promise<{ success: boolean; messageId?: string; error?: string }>
+    messageId: string
+  }): Promise<{ success: boolean; messageId?: string; done?: boolean; error?: string }>
   stopAiStream(): Promise<{ success: boolean }>
   listAiConversations(): Promise<import('../shared/types').AiConversation[]>
   saveAiConversation(conversation: import('../shared/types').AiConversation): Promise<{ success: boolean }>

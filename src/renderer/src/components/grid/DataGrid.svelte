@@ -336,7 +336,7 @@
                     <span class="italic text-text-muted text-xs">NULL</span>
                   {:else if cellType === 'boolean'}
                     <span class="inline-flex items-center px-1.5 py-0 rounded text-[11px] font-medium
-                      {displayValue ? 'bg-green-900/40 text-green-400' : 'bg-red-900/40 text-red-400'}">
+                      {displayValue ? 'bool-true' : 'bool-false'}">
                       {displayValue ? 'true' : 'false'}
                     </span>
                   {:else if cellType === 'json'}
@@ -542,5 +542,23 @@
 
   table {
     font-family: var(--font-mono);
+  }
+
+  .bool-true {
+    background: rgba(34, 197, 94, 0.15);
+    color: #16a34a;
+  }
+  .bool-false {
+    background: rgba(239, 68, 68, 0.15);
+    color: #dc2626;
+  }
+
+  :global(html.light) .bool-true {
+    background: #dcfce7;
+    color: #15803d;
+  }
+  :global(html.light) .bool-false {
+    background: #fee2e2;
+    color: #b91c1c;
   }
 </style>

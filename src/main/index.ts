@@ -542,36 +542,37 @@ function registerIpcHandlers(): void {
     return { success: true }
   })
 
-  ipcMain.handle('ai:send-message', async (event, params: {
+  ipcMain.handle('ai:send-message', (event, params: {
     messages: Array<{ role: 'user' | 'assistant'; content: string }>
     schemaContext: string
     model: string
+    messageId: string
   }) => {
-    const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
-    try {
-      ai.streamMessage(
-        params,
-        messageId,
-        (content) => {
-          if (!event.sender.isDestroyed()) {
-            event.sender.send('ai:stream-chunk', { messageId, content, done: false })
+    const messageId = params.messageId
+    // Return a promise that resolves when streaming completes.
+    // Content chunks are sent via event.sender.send during streaming.
+    // The final resolve/reject signals completion to the renderer.
+    return new Promise((resolve) => {
+      try {
+        ai.streamMessage(
+          params,
+          messageId,
+          (content) => {
+            if (!event.sender.isDestroyed()) {
+              event.sender.send('ai:stream-chunk', { messageId, content })
+            }
+          },
+          () => {
+            resolve({ success: true, messageId, done: true })
+          },
+          (error) => {
+            resolve({ success: true, messageId, done: true, error })
           }
-        },
-        () => {
-          if (!event.sender.isDestroyed()) {
-            event.sender.send('ai:stream-chunk', { messageId, content: '', done: true })
-          }
-        },
-        (error) => {
-          if (!event.sender.isDestroyed()) {
-            event.sender.send('ai:stream-chunk', { messageId, content: '', done: true, error })
-          }
-        }
-      )
-      return { success: true, messageId }
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : String(error) }
-    }
+        )
+      } catch (error) {
+        resolve({ success: false, error: error instanceof Error ? error.message : String(error) })
+      }
+    })
   })
 
   ipcMain.handle('ai:stop-stream', async () => {

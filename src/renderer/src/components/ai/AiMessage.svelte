@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { Marked } from 'marked'
+
   let { message, onRunQuery, isStreaming = false }: {
     message: { role: 'user' | 'assistant'; content: string; timestamp: number }
     onRunQuery?: (sql: string) => void
@@ -20,12 +22,10 @@
     let match: RegExpExecArray | null
 
     while ((match = regex.exec(text)) !== null) {
-      // Text before code block
       if (match.index > lastIndex) {
         const textContent = text.slice(lastIndex, match.index).trim()
         if (textContent) blocks.push({ type: 'text', content: textContent })
       }
-      // Code block
       blocks.push({
         type: 'code',
         content: match[2].trim(),
@@ -34,7 +34,6 @@
       lastIndex = match.index + match[0].length
     }
 
-    // Remaining text
     if (lastIndex < text.length) {
       const remaining = text.slice(lastIndex).trim()
       if (remaining) blocks.push({ type: 'text', content: remaining })
@@ -48,39 +47,61 @@
   }
 
   function highlightSql(code: string): string {
-    const keywords = /\b(SELECT|FROM|WHERE|AND|OR|NOT|IN|ON|AS|JOIN|LEFT|RIGHT|INNER|OUTER|FULL|CROSS|INSERT|INTO|VALUES|UPDATE|SET|DELETE|CREATE|ALTER|DROP|TABLE|INDEX|VIEW|FUNCTION|TRIGGER|PRIMARY|KEY|FOREIGN|REFERENCES|UNIQUE|CHECK|DEFAULT|NULL|IS|LIKE|ILIKE|BETWEEN|EXISTS|CASE|WHEN|THEN|ELSE|END|ORDER|BY|GROUP|HAVING|LIMIT|OFFSET|UNION|ALL|DISTINCT|COUNT|SUM|AVG|MIN|MAX|COALESCE|CAST|RETURNING|WITH|RECURSIVE|OVER|PARTITION|ROW_NUMBER|RANK|DENSE_RANK|LAG|LEAD|FIRST_VALUE|LAST_VALUE|ASC|DESC|NULLS|FIRST|LAST|GRANT|REVOKE|BEGIN|COMMIT|ROLLBACK|SAVEPOINT|EXPLAIN|ANALYZE|VACUUM|TRUNCATE|CASCADE|RESTRICT|IF|REPLACE|TEMP|TEMPORARY|SCHEMA|SEQUENCE|TYPE|ENUM|BOOLEAN|INTEGER|BIGINT|SMALLINT|TEXT|VARCHAR|CHAR|NUMERIC|DECIMAL|REAL|DOUBLE|PRECISION|DATE|TIME|TIMESTAMP|TIMESTAMPTZ|INTERVAL|JSON|JSONB|UUID|SERIAL|BIGSERIAL|ARRAY)\b/gi
-    const strings = /('(?:[^'\\]|\\.)*')/g
-    const numbers = /\b(\d+(?:\.\d+)?)\b/g
-    const comments = /(--[^\n]*)/g
-    const functions = /\b([a-z_]\w*)\s*(?=\()/gi
+    // Tokenize first to avoid regex replacements corrupting each other's HTML
+    const tokens: Array<{ start: number; end: number; cls: string }> = []
 
-    let result = code
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
+    const patterns: Array<{ re: RegExp; cls: string }> = [
+      { re: /(--[^\n]*)/g, cls: 'text-text-muted italic' },
+      { re: /('(?:[^'\\]|\\.)*')/g, cls: 'text-amber-400' },
+      { re: /\b(SELECT|FROM|WHERE|AND|OR|NOT|IN|ON|AS|JOIN|LEFT|RIGHT|INNER|OUTER|FULL|CROSS|INSERT|INTO|VALUES|UPDATE|SET|DELETE|CREATE|ALTER|DROP|TABLE|INDEX|VIEW|FUNCTION|TRIGGER|PRIMARY|KEY|FOREIGN|REFERENCES|UNIQUE|CHECK|DEFAULT|NULL|IS|LIKE|ILIKE|BETWEEN|EXISTS|CASE|WHEN|THEN|ELSE|END|ORDER|BY|GROUP|HAVING|LIMIT|OFFSET|UNION|ALL|DISTINCT|COUNT|SUM|AVG|MIN|MAX|COALESCE|CAST|RETURNING|WITH|RECURSIVE|OVER|PARTITION|ROW_NUMBER|RANK|DENSE_RANK|LAG|LEAD|FIRST_VALUE|LAST_VALUE|ASC|DESC|NULLS|FIRST|LAST|GRANT|REVOKE|BEGIN|COMMIT|ROLLBACK|SAVEPOINT|EXPLAIN|ANALYZE|VACUUM|TRUNCATE|CASCADE|RESTRICT|IF|REPLACE|TEMP|TEMPORARY|SCHEMA|SEQUENCE|TYPE|ENUM|BOOLEAN|INTEGER|BIGINT|SMALLINT|TEXT|VARCHAR|CHAR|NUMERIC|DECIMAL|REAL|DOUBLE|PRECISION|DATE|TIME|TIMESTAMP|TIMESTAMPTZ|INTERVAL|JSON|JSONB|UUID|SERIAL|BIGSERIAL|ARRAY)\b/gi, cls: 'text-blue-400 font-semibold' },
+      { re: /\b(\d+(?:\.\d+)?)\b/g, cls: 'text-purple-400' }
+    ]
 
-    result = result.replace(comments, '<span class="text-text-muted italic">$1</span>')
-    result = result.replace(strings, '<span class="text-amber-400">$1</span>')
-    result = result.replace(keywords, '<span class="text-blue-400 font-semibold">$1</span>')
-    result = result.replace(numbers, '<span class="text-purple-400">$1</span>')
+    // Collect all token positions (earlier patterns take priority)
+    for (const { re, cls } of patterns) {
+      let m: RegExpExecArray | null
+      while ((m = re.exec(code)) !== null) {
+        const start = m.index
+        const end = start + m[0].length
+        // Skip if overlapping with an existing higher-priority token
+        if (!tokens.some((t) => start < t.end && end > t.start)) {
+          tokens.push({ start, end, cls })
+        }
+      }
+    }
+
+    tokens.sort((a, b) => a.start - b.start)
+
+    // Build result
+    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    let result = ''
+    let pos = 0
+    for (const t of tokens) {
+      if (t.start > pos) result += esc(code.slice(pos, t.start))
+      result += `<span class="${t.cls}">${esc(code.slice(t.start, t.end))}</span>`
+      pos = t.end
+    }
+    if (pos < code.length) result += esc(code.slice(pos))
 
     return result
   }
 
-  function formatText(text: string): string {
-    let result = text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
+  // Configure marked to skip code blocks (we handle them ourselves)
+  const marked = new Marked({
+    renderer: {
+      // Prevent marked from processing fenced code blocks in text sections
+      code({ text, lang }) {
+        // Shouldn't happen since we split code blocks out, but just in case
+        const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        return `<pre><code class="language-${lang || ''}">${escaped}</code></pre>`
+      }
+    },
+    gfm: true,
+    breaks: true
+  })
 
-    // Bold
-    result = result.replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold text-text-primary">$1</strong>')
-    // Inline code
-    result = result.replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 bg-surface-tertiary rounded text-[11px] font-mono text-accent">$1</code>')
-    // Line breaks
-    result = result.replace(/\n/g, '<br/>')
-
-    return result
+  function renderMarkdown(text: string): string {
+    return marked.parse(text) as string
   }
 
   async function copyCode(code: string, idx: number) {
@@ -139,8 +160,8 @@
           <pre class="px-3 py-2 text-[12px] font-mono leading-relaxed overflow-x-auto"><code>{#if block.language?.toLowerCase() === 'sql'}{@html highlightSql(block.content)}{:else}{block.content}{/if}</code></pre>
         </div>
       {:else}
-        <div class="text-[13px] leading-relaxed {message.role === 'user' ? 'text-text-primary' : 'text-text-secondary'}">
-          {@html formatText(block.content)}
+        <div class="ai-markdown text-[13px] leading-relaxed {message.role === 'user' ? 'text-text-primary' : 'text-text-secondary'}">
+          {@html renderMarkdown(block.content)}
         </div>
       {/if}
     {/each}
@@ -150,3 +171,95 @@
     {/if}
   </div>
 </div>
+
+<style>
+  .ai-markdown :global(h1) {
+    font-size: 1.25em;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0.75em 0 0.4em;
+  }
+  .ai-markdown :global(h2) {
+    font-size: 1.1em;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0.6em 0 0.3em;
+  }
+  .ai-markdown :global(h3) {
+    font-size: 1em;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0.5em 0 0.25em;
+  }
+  .ai-markdown :global(p) {
+    margin: 0.4em 0;
+  }
+  .ai-markdown :global(p:first-child) {
+    margin-top: 0;
+  }
+  .ai-markdown :global(p:last-child) {
+    margin-bottom: 0;
+  }
+  .ai-markdown :global(ul),
+  .ai-markdown :global(ol) {
+    margin: 0.4em 0;
+    padding-left: 1.5em;
+  }
+  .ai-markdown :global(li) {
+    margin: 0.15em 0;
+  }
+  .ai-markdown :global(ul) {
+    list-style-type: disc;
+  }
+  .ai-markdown :global(ol) {
+    list-style-type: decimal;
+  }
+  .ai-markdown :global(strong) {
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .ai-markdown :global(em) {
+    font-style: italic;
+  }
+  .ai-markdown :global(code) {
+    padding: 0.15em 0.35em;
+    background: var(--surface-tertiary);
+    border-radius: 4px;
+    font-size: 0.9em;
+    font-family: ui-monospace, monospace;
+    color: var(--accent);
+  }
+  .ai-markdown :global(hr) {
+    border: none;
+    border-top: 1px solid var(--border-primary);
+    margin: 0.75em 0;
+  }
+  .ai-markdown :global(table) {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.5em 0;
+    font-size: 0.9em;
+  }
+  .ai-markdown :global(th) {
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-primary);
+    padding: 0.35em 0.6em;
+    border-bottom: 2px solid var(--border-primary);
+    background: var(--surface-tertiary);
+  }
+  .ai-markdown :global(td) {
+    padding: 0.3em 0.6em;
+    border-bottom: 1px solid var(--border-primary);
+  }
+  .ai-markdown :global(blockquote) {
+    border-left: 3px solid var(--accent);
+    padding-left: 0.75em;
+    margin: 0.5em 0;
+    color: var(--text-muted);
+  }
+  .ai-markdown :global(a) {
+    color: var(--accent);
+    text-decoration: underline;
+  }
+</style>

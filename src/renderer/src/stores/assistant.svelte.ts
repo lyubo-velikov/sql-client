@@ -1,5 +1,6 @@
 import type { AiMessage, AiConversation } from '../../../shared/types'
 import { connectionStore } from './connection.svelte'
+import { tabStore } from './tabs.svelte'
 
 let messages = $state<AiMessage[]>([])
 let conversations = $state<AiConversation[]>([])
@@ -8,7 +9,7 @@ let streaming = $state(false)
 let streamingContent = $state('')
 let streamingMessageId = $state<string | null>(null)
 let hasApiKey = $state(false)
-let model = $state('sonnet')
+let model = $state('claude-sonnet-4-6')
 let provider = $state<'api' | 'claude-cli'>('claude-cli')
 let loaded = $state(false)
 let unsubscribeStream: (() => void) | null = null
@@ -108,39 +109,11 @@ async function load(): Promise<void> {
     // Keep defaults
   }
 
-  // Set up stream listener
+  // Set up stream listener — only handles content chunks
   unsubscribeStream = window.api.onAiStreamChunk((data) => {
-    if (data.messageId === streamingMessageId) {
-      if (data.error) {
-        streamingContent = ''
-        streaming = false
-        streamingMessageId = null
-        // Add error as assistant message
-        messages = [...messages, {
-          id: generateId(),
-          role: 'assistant',
-          content: `Error: ${data.error}`,
-          timestamp: Date.now()
-        }]
-      } else if (data.done) {
-        // Finalize the assistant message
-        if (streamingContent) {
-          const finalMessage: AiMessage = {
-            id: generateId(),
-            role: 'assistant',
-            content: streamingContent,
-            timestamp: Date.now(),
-            model
-          }
-          messages = [...messages, finalMessage]
-          persistConversation()
-        }
-        streaming = false
-        streamingContent = ''
-        streamingMessageId = null
-      } else {
-        streamingContent += data.content
-      }
+    if (!streaming) return
+    if (data.content) {
+      streamingContent += data.content
     }
   })
 
@@ -182,22 +155,61 @@ async function sendMessage(text: string): Promise<void> {
   streaming = true
   streamingContent = ''
 
-  const schemaContext = await getDetailedSchemaContext()
+  let schemaContext = await getDetailedSchemaContext()
+
+  // Include active tab query as context
+  const activeTab = tabStore.activeTab
+  if (activeTab?.query?.trim()) {
+    schemaContext += `\n\n-- Current active query (tab: "${activeTab.title}"):\n${activeTab.query.trim()}`
+  }
 
   // Build message history for context
   const history = messages.map((m) => ({ role: m.role, content: m.content }))
 
+  const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  streamingMessageId = messageId
+
   try {
+    // This promise resolves when streaming is fully complete (done or error).
+    // Content chunks arrive via the onAiStreamChunk listener during the await.
     const result = await window.api.sendAiMessage({
       messages: history,
       schemaContext,
-      model
+      model,
+      messageId
     })
 
-    if (result.success && result.messageId) {
-      streamingMessageId = result.messageId
-    } else {
+    if (result.error) {
+      // Stream completed with an error
+      streamingContent = ''
       streaming = false
+      streamingMessageId = null
+      messages = [...messages, {
+        id: generateId(),
+        role: 'assistant',
+        content: `Error: ${result.error}`,
+        timestamp: Date.now()
+      }]
+    } else if (result.done) {
+      // Stream completed successfully — finalize the message
+      if (streamingContent) {
+        const finalMessage: AiMessage = {
+          id: generateId(),
+          role: 'assistant',
+          content: streamingContent,
+          timestamp: Date.now(),
+          model
+        }
+        messages = [...messages, finalMessage]
+        persistConversation()
+      }
+      streaming = false
+      streamingContent = ''
+      streamingMessageId = null
+    } else if (!result.success) {
+      // IPC call itself failed (not a stream error)
+      streaming = false
+      streamingMessageId = null
       messages = [...messages, {
         id: generateId(),
         role: 'assistant',
@@ -207,6 +219,7 @@ async function sendMessage(text: string): Promise<void> {
     }
   } catch (err) {
     streaming = false
+    streamingMessageId = null
     messages = [...messages, {
       id: generateId(),
       role: 'assistant',

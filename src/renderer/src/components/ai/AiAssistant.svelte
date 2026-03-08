@@ -17,9 +17,9 @@
   let isDragging = $state(false)
 
   const MODELS = [
-    { id: 'sonnet', label: 'Claude Sonnet' },
-    { id: 'opus', label: 'Claude Opus' },
-    { id: 'haiku', label: 'Claude Haiku' }
+    { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
+    { id: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
+    { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' }
   ]
 
   onMount(async () => {

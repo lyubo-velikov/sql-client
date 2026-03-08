@@ -105,12 +105,13 @@ const api = {
     messages: Array<{ role: 'user' | 'assistant'; content: string }>
     schemaContext: string
     model: string
+    messageId: string
   }) => ipcRenderer.invoke('ai:send-message', params),
   stopAiStream: () => ipcRenderer.invoke('ai:stop-stream'),
   listAiConversations: () => ipcRenderer.invoke('ai:list-conversations'),
   saveAiConversation: (conversation: any) => ipcRenderer.invoke('ai:save-conversation', { conversation }),
   deleteAiConversation: (id: string) => ipcRenderer.invoke('ai:delete-conversation', { id }),
-  onAiStreamChunk: (callback: (data: { messageId: string; content: string; done: boolean; error?: string }) => void) => {
+  onAiStreamChunk: (callback: (data: { messageId: string; content: string }) => void) => {
     const handler = (_event: any, data: any) => callback(data)
     ipcRenderer.on('ai:stream-chunk', handler)
     return () => { ipcRenderer.removeListener('ai:stream-chunk', handler) }

@@ -17,7 +17,7 @@ interface AiSettingsFile {
 
 let settings: AiSettingsFile = {
   provider: 'claude-cli',
-  model: 'sonnet',
+  model: 'claude-sonnet-4-6',
   conversations: []
 }
 let filePath: string | null = null
@@ -40,7 +40,7 @@ function loadSettings(): void {
       settings = {
         provider: parsed.provider || 'claude-cli',
         encryptedApiKey: parsed.encryptedApiKey,
-        model: parsed.model || 'sonnet',
+        model: parsed.model || 'claude-sonnet-4-6',
         conversations: Array.isArray(parsed.conversations) ? parsed.conversations : []
       }
     }
@@ -163,7 +163,7 @@ Current database schema:
 
 // --- Anthropic API provider ---
 
-async function streamViaApi(
+function streamViaApi(
   params: {
     messages: Array<{ role: 'user' | 'assistant'; content: string }>
     schemaContext: string
@@ -172,7 +172,7 @@ async function streamViaApi(
   onChunk: (content: string) => void,
   onDone: () => void,
   onError: (error: string) => void
-): Promise<void> {
+): void {
   const apiKey = getApiKey()
   if (!apiKey) {
     onError('API key not configured. Please set your Anthropic API key in the AI Assistant settings.')
@@ -182,10 +182,24 @@ async function streamViaApi(
   const client = new Anthropic({ apiKey })
   currentAbort = new AbortController()
 
-  try {
-    const systemPrompt = SYSTEM_PROMPT.replace('{SCHEMA_CONTEXT}', params.schemaContext || 'No schema context available.')
+  const systemPrompt = SYSTEM_PROMPT.replace('{SCHEMA_CONTEXT}', params.schemaContext || 'No schema context available.')
 
-    const stream = await client.messages.stream({
+  let finished = false
+  function finish() {
+    if (finished) return
+    finished = true
+    currentAbort = null
+    onDone()
+  }
+  function fail(err: string) {
+    if (finished) return
+    finished = true
+    currentAbort = null
+    onError(err)
+  }
+
+  try {
+    const stream = client.messages.stream({
       model: params.model || settings.model,
       max_tokens: 4096,
       system: systemPrompt,
@@ -195,21 +209,27 @@ async function streamViaApi(
       }))
     }, { signal: currentAbort.signal })
 
-    for await (const event of stream) {
-      if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-        onChunk(event.delta.text)
-      }
-    }
+    stream.on('text', (text) => {
+      onChunk(text)
+    })
 
-    onDone()
+    stream.on('end', () => {
+      finish()
+    })
+
+    stream.on('error', (err) => {
+      if (err instanceof Error && err.name === 'AbortError') {
+        finish()
+      } else {
+        fail(err instanceof Error ? err.message : String(err))
+      }
+    })
+
+    stream.on('abort', () => {
+      finish()
+    })
   } catch (err: unknown) {
-    if (err instanceof Error && err.name === 'AbortError') {
-      onDone()
-    } else {
-      onError(err instanceof Error ? err.message : String(err))
-    }
-  } finally {
-    currentAbort = null
+    fail(err instanceof Error ? err.message : String(err))
   }
 }
 
@@ -377,7 +397,7 @@ function streamViaCli(
 
 // --- Public streaming function (routes to provider) ---
 
-export async function streamMessage(
+export function streamMessage(
   params: {
     messages: Array<{ role: 'user' | 'assistant'; content: string }>
     schemaContext: string
@@ -387,10 +407,10 @@ export async function streamMessage(
   onChunk: (content: string) => void,
   onDone: () => void,
   onError: (error: string) => void
-): Promise<void> {
+): void {
   if (settings.provider === 'claude-cli') {
     streamViaCli(params, onChunk, onDone, onError)
   } else {
-    await streamViaApi(params, onChunk, onDone, onError)
+    streamViaApi(params, onChunk, onDone, onError)
   }
 }

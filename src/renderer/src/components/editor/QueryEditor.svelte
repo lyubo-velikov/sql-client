@@ -3,12 +3,16 @@
   import { EditorView, keymap, placeholder as cmPlaceholder } from '@codemirror/view'
   import { EditorState, Prec, Compartment } from '@codemirror/state'
   import { sql, PostgreSQL } from '@codemirror/lang-sql'
-  import { oneDark } from '@codemirror/theme-one-dark'
+  import { materialDark, materialLight } from '@uiw/codemirror-theme-material'
   import { basicSetup } from 'codemirror'
+  import { themeStore } from '../../stores/theme.svelte'
   import DataGrid from '../grid/DataGrid.svelte'
   import RowDetailSidebar from '../grid/RowDetailSidebar.svelte'
   import { historyStore } from '../../stores/history.svelte'
   import { connectionStore } from '../../stores/connection.svelte'
+  import { createChangeBuffer } from '../../stores/changeBuffer.svelte'
+  import { notificationStore } from '../../stores/notifications.svelte'
+  import { buildUpdateStatements, buildDeleteStatements } from '../../utils/sqlBuilder'
 
   let { initialQuery = '', filePath, onQueryChange, onToggleHistory, onAskAi }: {
     initialQuery?: string
@@ -24,11 +28,15 @@
   let editorContainer: HTMLDivElement | undefined = $state()
   let editorView: EditorView | undefined = $state()
   const sqlCompartment = new Compartment()
+  const themeCompartment = new Compartment()
+
+  function getEditorTheme() {
+    return themeStore.theme === 'light' ? materialLight : materialDark
+  }
 
   function buildSqlSchema(): Record<string, string[]> {
     const schema: Record<string, string[]> = {}
     for (const t of connectionStore.tables) {
-      // Add both qualified and unqualified names
       schema[`${t.schemaname}.${t.tablename}`] = []
       schema[t.tablename] = []
     }
@@ -49,7 +57,7 @@
   let hasExecuted = $state(false)
 
   // Splitter state
-  let splitRatio = $state(40) // percentage for editor
+  let splitRatio = $state(40)
   let isDragging = $state(false)
   let containerEl: HTMLDivElement | undefined = $state()
 
@@ -63,6 +71,15 @@
   let sidebarOpen = $state(false)
   let selectedRowIndex = $state<number | null>(null)
   let selectedRowData = $state<Record<string, unknown> | null>(null)
+
+  // Editing state for query results
+  let editableSchema = $state<string | null>(null)
+  let editableTable = $state<string | null>(null)
+  let primaryKeyColumns = $state<string[]>([])
+  let editable = $derived(editableTable !== null && primaryKeyColumns.length > 0)
+  const changeBuffer = createChangeBuffer()
+  let saving = $state(false)
+  let lastExecutedQuery = $state('')
 
   function handleRowSelect(idx: number | null, row: Record<string, unknown> | null) {
     selectedRowIndex = idx
@@ -81,6 +98,104 @@
       selectedRowIndex = newIndex
       selectedRowData = paginatedRows[newIndex]
     }
+  }
+
+  function handleCellEdit(rowIndex: number, column: string, originalValue: unknown, newValue: unknown) {
+    changeBuffer.setCellEdit(rowIndex, column, originalValue, newValue)
+  }
+
+  function handleDeleteRow(rowIndex: number) {
+    changeBuffer.toggleRowDeleted(rowIndex)
+  }
+
+  function discardChanges() {
+    changeBuffer.clearAll()
+  }
+
+  async function commitChanges() {
+    if (!changeBuffer.hasChanges || saving || !editableSchema || !editableTable) return
+    if (primaryKeyColumns.length === 0) {
+      notificationStore.add('error', 'Cannot save: table has no primary key')
+      return
+    }
+
+    saving = true
+    try {
+      const statements = [
+        ...buildDeleteStatements(editableSchema, editableTable, changeBuffer.deletes, resultRows, primaryKeyColumns),
+        ...buildUpdateStatements(editableSchema, editableTable, changeBuffer.edits, resultRows, primaryKeyColumns)
+      ]
+
+      const result = await window.api.executeTransaction(
+        JSON.parse(JSON.stringify({ statements, primaryKeyColumns }))
+      )
+
+      if (result.success) {
+        const count = statements.length
+        changeBuffer.clearAll()
+        // Re-run the query to refresh results
+        await reExecuteQuery()
+        notificationStore.add('success', `${count} change${count !== 1 ? 's' : ''} saved`)
+      } else {
+        notificationStore.add('error', `Transaction failed: ${result.error}`)
+      }
+    } catch (e) {
+      notificationStore.add('error', `Save failed: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      saving = false
+    }
+  }
+
+  /**
+   * Try to detect if a query is a simple SELECT from a single table.
+   * Returns { schema, table } or null.
+   */
+  function detectSourceTable(queryText: string): { schema: string; table: string } | null {
+    // Strip comments
+    const cleaned = queryText
+      .replace(/--[^\n]*/g, '')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .trim()
+
+    // Match: SELECT ... FROM [schema.]table [WHERE|ORDER|GROUP|LIMIT|;|$]
+    // Handles quoted and unquoted identifiers
+    const fromMatch = cleaned.match(
+      /\bFROM\s+(?:"([^"]+)"|([a-z_]\w*))(?:\s*\.\s*(?:"([^"]+)"|([a-z_]\w*)))?\s*(?:WHERE|ORDER|GROUP|HAVING|LIMIT|OFFSET|;|$)/i
+    )
+    if (!fromMatch) return null
+
+    // Check there's no JOIN, subquery, or multiple tables
+    if (/\bJOIN\b/i.test(cleaned)) return null
+    // Check for comma-separated tables in FROM
+    const fromClause = cleaned.match(/\bFROM\s+([\s\S]*?)(?:\bWHERE\b|\bORDER\b|\bGROUP\b|\bHAVING\b|\bLIMIT\b|\bOFFSET\b|;|$)/i)
+    if (fromClause && fromClause[1].includes(',')) return null
+
+    const part1 = fromMatch[1] || fromMatch[2]
+    const part2 = fromMatch[3] || fromMatch[4]
+
+    if (part2) {
+      return { schema: part1, table: part2 }
+    }
+
+    // No schema specified — find the table in known tables
+    const knownTable = connectionStore.tables.find(
+      (t) => t.tablename.toLowerCase() === part1.toLowerCase()
+    )
+    if (knownTable) {
+      return { schema: knownTable.schemaname, table: knownTable.tablename }
+    }
+
+    return { schema: 'public', table: part1 }
+  }
+
+  async function fetchPrimaryKeys(schema: string, table: string): Promise<string[]> {
+    try {
+      const result = await window.api.getTableSchema(schema, table)
+      if (result.success && result.data) {
+        return result.data.filter((col: any) => col.is_primary_key).map((col: any) => col.column_name)
+      }
+    } catch { /* ignore */ }
+    return []
   }
 
   // For client-side pagination of query results
@@ -109,12 +224,26 @@
 
   function getEditorContent(): string {
     if (!editorView) return ''
-    // Check if there's a selection
     const selection = editorView.state.selection.main
     if (selection.from !== selection.to) {
       return editorView.state.sliceDoc(selection.from, selection.to)
     }
     return editorView.state.doc.toString()
+  }
+
+  async function reExecuteQuery() {
+    if (!lastExecutedQuery) return
+    try {
+      const result = await window.api.executeQuery(lastExecutedQuery)
+      if (result.success && result.data) {
+        resultRows = result.data.rows
+        resultColumns = result.data.fields.length > 0
+          ? result.data.fields.map((f: any) => typeof f === 'string' ? f : f.name)
+          : resultRows.length > 0 ? Object.keys(resultRows[0]) : []
+        resultCount = result.data.rowCount
+        executionTime = result.data.duration
+      }
+    } catch { /* ignore */ }
   }
 
   async function executeQuery() {
@@ -131,6 +260,11 @@
     sidebarOpen = false
     selectedRowIndex = null
     selectedRowData = null
+    changeBuffer.clearAll()
+    editableSchema = null
+    editableTable = null
+    primaryKeyColumns = []
+    lastExecutedQuery = queryText
 
     try {
       const result = await window.api.executeQuery(queryText)
@@ -142,7 +276,20 @@
         resultCount = result.data.rowCount
         executionTime = result.data.duration
 
-        // History is logged automatically by the main process
+        // Try to detect source table for inline editing
+        const source = detectSourceTable(queryText)
+        if (source) {
+          const pks = await fetchPrimaryKeys(source.schema, source.table)
+          if (pks.length > 0) {
+            // Verify all PK columns exist in results
+            const allPksPresent = pks.every((pk) => resultColumns.includes(pk))
+            if (allPksPresent) {
+              editableSchema = source.schema
+              editableTable = source.table
+              primaryKeyColumns = pks
+            }
+          }
+        }
       } else {
         queryError = result.error ?? 'Query failed'
         resultRows = []
@@ -160,10 +307,18 @@
   }
 
   function handleResultPageChange(p: number) {
+    if (changeBuffer.hasChanges) {
+      if (!confirm('You have unsaved changes. Discard them?')) return
+      changeBuffer.clearAll()
+    }
     resultPage = p
   }
 
   function handleResultSort(column: string, direction: 'asc' | 'desc') {
+    if (changeBuffer.hasChanges) {
+      if (!confirm('You have unsaved changes. Discard them?')) return
+      changeBuffer.clearAll()
+    }
     resultSortColumn = column
     resultSortDirection = direction
     resultPage = 1
@@ -187,6 +342,13 @@
     isDragging = false
   }
 
+  function handleKeydown(e: KeyboardEvent) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 's' && changeBuffer.hasChanges) {
+      e.preventDefault()
+      commitChanges()
+    }
+  }
+
   onMount(async () => {
     if (!editorContainer) return
 
@@ -207,36 +369,9 @@
       }
     ]))
 
-    const customTheme = EditorView.theme({
-      '&': {
-        backgroundColor: 'var(--color-surface-primary)',
-        color: 'var(--color-text-primary)'
-      },
-      '.cm-gutters': {
-        backgroundColor: 'var(--color-surface-secondary)',
-        color: 'var(--color-text-muted)',
-        border: 'none',
-        borderRight: '1px solid var(--color-border-primary)'
-      },
-      '.cm-activeLineGutter': {
-        backgroundColor: 'var(--color-surface-tertiary)'
-      },
-      '.cm-activeLine': {
-        backgroundColor: 'var(--color-surface-secondary)'
-      },
-      '.cm-selectionMatch': {
-        backgroundColor: 'rgba(16, 163, 127, 0.15)'
-      },
+    const accentOverrides = EditorView.theme({
       '&.cm-focused .cm-cursor': {
         borderLeftColor: 'var(--color-accent)'
-      },
-      '&.cm-focused .cm-selectionBackground, ::selection': {
-        backgroundColor: 'rgba(16, 163, 127, 0.2)'
-      },
-      '.cm-foldPlaceholder': {
-        backgroundColor: 'var(--color-surface-tertiary)',
-        border: 'none',
-        color: 'var(--color-text-muted)'
       }
     })
 
@@ -278,8 +413,8 @@
       extensions: [
         basicSetup,
         sqlCompartment.of(buildSqlExtension()),
-        oneDark,
-        customTheme,
+        themeCompartment.of(getEditorTheme()),
+        accentOverrides,
         runQueryKeymap,
         contentSync,
         cmPlaceholder('Enter SQL query...'),
@@ -314,7 +449,19 @@
       })
     }
   })
+
+  // Swap editor theme when app theme changes
+  $effect(() => {
+    const _theme = themeStore.theme
+    if (editorView) {
+      editorView.dispatch({
+        effects: themeCompartment.reconfigure(getEditorTheme())
+      })
+    }
+  })
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 <div
   class="flex flex-col h-full relative"
@@ -355,6 +502,29 @@
           Ctrl+Enter
         {/if}
       </span>
+
+      <!-- Pending changes indicator -->
+      {#if changeBuffer.hasChanges}
+        <div class="flex items-center gap-2 ml-2">
+          <span class="text-amber-400 text-xs font-medium">
+            {changeBuffer.pendingChangeCount} unsaved
+          </span>
+          <button
+            class="text-[11px] text-text-muted hover:text-text-secondary transition-colors"
+            onclick={discardChanges}
+          >
+            Discard
+          </button>
+          <button
+            class="flex items-center gap-1 text-[11px] bg-accent text-white px-2 py-0.5 rounded hover:bg-accent-hover transition-colors disabled:opacity-50"
+            onclick={commitChanges}
+            disabled={saving}
+          >
+            {#if saving}Saving...{:else}Save{/if}
+            <kbd class="text-[9px] opacity-70 ml-0.5">&#8984;S</kbd>
+          </button>
+        </div>
+      {/if}
 
       <div class="flex-1"></div>
 
@@ -443,6 +613,11 @@
         <span class="text-text-secondary">
           {resultCount} {resultCount === 1 ? 'row' : 'rows'} returned
         </span>
+        {#if editable}
+          <span class="text-text-muted text-[10px]">
+            editing {editableSchema}.{editableTable}
+          </span>
+        {/if}
       </div>
 
       <!-- Results grid + sidebar -->
@@ -461,6 +636,11 @@
             sortDirection={resultSortDirection}
             onRowSelect={handleRowSelect}
             selectedRowIndex={sidebarOpen ? selectedRowIndex : null}
+            {editable}
+            {primaryKeyColumns}
+            changeBuffer={editable ? changeBuffer : undefined}
+            onCellEdit={editable ? handleCellEdit : undefined}
+            onDeleteRow={editable ? handleDeleteRow : undefined}
           />
         </div>
         <RowDetailSidebar
@@ -468,6 +648,10 @@
           rowIndex={selectedRowIndex ?? -1}
           columns={resultColumns}
           open={sidebarOpen}
+          {editable}
+          {primaryKeyColumns}
+          changeBuffer={editable ? changeBuffer : undefined}
+          onCellEdit={editable ? handleCellEdit : undefined}
           onClose={handleSidebarClose}
           onNavigate={handleSidebarNavigate}
         />
