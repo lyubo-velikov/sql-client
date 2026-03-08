@@ -5,6 +5,8 @@ import type { Sql } from 'postgres'
 import { connectToDatabase, disconnectDatabase, getConnection, isConnected, getCurrentDatabase } from './db'
 import { performance } from 'perf_hooks'
 import { initHistory, saveHistory, addEntry, getEntries, searchEntries, clearEntries } from './history'
+import { initConnections, saveConnections, getAllConnections, addConnection, updateConnection, deleteConnection, duplicateConnection } from './connections'
+import type { UndoData, UndoOperation, StatementWithMeta } from '../shared/types'
 
 interface FilterParam {
   column: string
@@ -57,6 +59,39 @@ function buildWhereClause(sql: Sql, filters?: FilterParam[]) {
   return sql`WHERE ${combined}`
 }
 
+function inlineParams(sqlStr: string, params: unknown[]): string {
+  if (!params || params.length === 0) return sqlStr
+  return sqlStr.replace(/\$(\d+)/g, (_, idx) => {
+    const val = params[parseInt(idx, 10) - 1]
+    if (val === null || val === undefined) return 'NULL'
+    if (typeof val === 'number') return String(val)
+    if (typeof val === 'boolean') return val ? 'TRUE' : 'FALSE'
+    // Escape single quotes for string values
+    return `'${String(val).replace(/'/g, "''")}'`
+  })
+}
+
+function buildPkWhereClause(
+  columns: string[],
+  values: unknown[],
+  startParam = 1
+): { sql: string; params: unknown[] } {
+  const parts: string[] = []
+  const params: unknown[] = []
+  let pi = startParam
+  for (let i = 0; i < columns.length; i++) {
+    const col = `"${columns[i].replace(/"/g, '""')}"`
+    const val = values[i]
+    if (val === null || val === undefined) {
+      parts.push(`${col} IS NULL`)
+    } else {
+      parts.push(`${col} = $${pi++}`)
+      params.push(val)
+    }
+  }
+  return { sql: parts.join(' AND '), params }
+}
+
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
     width: 1400,
@@ -94,7 +129,7 @@ function createWindow(): void {
 function registerIpcHandlers(): void {
   ipcMain.handle('db:connect', async (_event, params: { host: string; port: number; database: string; username: string; password: string }) => {
     try {
-      const sql = connectToDatabase(params)
+      const sql = await connectToDatabase(params)
       // Test the connection by running a simple query
       await sql`SELECT 1`
       return { success: true, data: { message: 'Connected successfully' } }
@@ -232,19 +267,108 @@ function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('db:execute-transaction', async (_event, params: { statements: Array<{ sql: string; params: unknown[] }> }) => {
-    const combinedSql = params.statements.map((s) => s.sql).join(';\n')
+  ipcMain.handle('db:execute-transaction', async (_event, params: {
+    statements: Array<StatementWithMeta | { sql: string; params: unknown[] }>
+    primaryKeyColumns?: string[]
+  }) => {
+    const combinedSql = params.statements.map((s) => inlineParams(s.sql, s.params)).join(';\n')
     const start = performance.now()
     try {
       const conn = getConnection()
       let totalAffected = 0
+      const undoOps: UndoOperation[] = []
+
       await conn.begin(async (tx) => {
         for (const stmt of params.statements) {
-          const result = await tx.unsafe(stmt.sql, stmt.params)
+          const meta = 'meta' in stmt ? stmt.meta : undefined
+
+          // Before-state capture for undo
+          if (meta && undoOps.length < 100) {
+            try {
+              if (meta.type === 'update' && meta.affectedColumns && meta.whereColumns && meta.whereValues) {
+                // SELECT original values before updating
+                const selectCols = meta.affectedColumns.map((c) => `"${c.replace(/"/g, '""')}"`).join(', ')
+                const whereClause = buildPkWhereClause(meta.whereColumns, meta.whereValues)
+                const before = await tx.unsafe(
+                  `SELECT ${selectCols} FROM "${meta.schema}"."${meta.table}" WHERE ${whereClause.sql}`,
+                  whereClause.params
+                )
+                if (before.length > 0) {
+                  const original = before[0] as Record<string, unknown>
+                  // Build reverse UPDATE
+                  const reverseParts: string[] = []
+                  const reverseParams: unknown[] = []
+                  let pi = 1
+                  for (const col of meta.affectedColumns) {
+                    reverseParams.push(original[col])
+                    reverseParts.push(`"${col.replace(/"/g, '""')}" = $${pi++}`)
+                  }
+                  const revWhere = buildPkWhereClause(meta.whereColumns, meta.whereValues, pi)
+                  reverseParams.push(...revWhere.params)
+
+                  undoOps.push({
+                    type: 'reverse-update',
+                    reverseSql: `UPDATE "${meta.schema}"."${meta.table}" SET ${reverseParts.join(', ')} WHERE ${revWhere.sql}`,
+                    reverseParams,
+                    description: `Restore ${meta.affectedColumns.join(', ')} in ${meta.schema}.${meta.table}`
+                  })
+                }
+              } else if (meta.type === 'delete' && meta.fullRowData && meta.whereColumns) {
+                // We already have the full row data from the renderer
+                const row = meta.fullRowData
+                const cols = Object.keys(row)
+                const reverseParams = cols.map((c) => row[c])
+                const placeholders = cols.map((_, i) => `$${i + 1}`)
+                const quotedCols = cols.map((c) => `"${c.replace(/"/g, '""')}"`)
+
+                undoOps.push({
+                  type: 'reverse-delete',
+                  reverseSql: `INSERT INTO "${meta.schema}"."${meta.table}" (${quotedCols.join(', ')}) VALUES (${placeholders.join(', ')})`,
+                  reverseParams,
+                  description: `Re-insert deleted row into ${meta.schema}.${meta.table}`
+                })
+              }
+              // INSERT undo is handled after execution (need RETURNING)
+            } catch {
+              // Don't fail the transaction if undo capture fails
+            }
+          }
+
+          // Execute the actual statement
+          let execSql = stmt.sql
+          const pkCols = params.primaryKeyColumns
+          if (meta?.type === 'insert' && pkCols && pkCols.length > 0 && undoOps.length < 100) {
+            // Append RETURNING for insert undo
+            const retCols = pkCols.map((c) => `"${c.replace(/"/g, '""')}"`).join(', ')
+            execSql = `${stmt.sql} RETURNING ${retCols}`
+          }
+
+          const result = await tx.unsafe(execSql, stmt.params)
           totalAffected += result.count ?? 0
+
+          // After-state capture for INSERTs
+          if (meta?.type === 'insert' && pkCols && pkCols.length > 0 && result.length > 0 && undoOps.length < 100) {
+            try {
+              const insertedRow = result[0] as Record<string, unknown>
+              const whereClause = buildPkWhereClause(pkCols, pkCols.map((c) => insertedRow[c]))
+              undoOps.push({
+                type: 'reverse-insert',
+                reverseSql: `DELETE FROM "${meta.schema}"."${meta.table}" WHERE ${whereClause.sql}`,
+                reverseParams: whereClause.params,
+                description: `Delete inserted row from ${meta.schema}.${meta.table}`
+              })
+            } catch {
+              // Don't fail if undo capture fails
+            }
+          }
         }
       })
       const duration = performance.now() - start
+
+      // Reverse the undo operations order (INSERTs undone first, then UPDATEs, then DELETEs)
+      undoOps.reverse()
+
+      const undoData: UndoData | undefined = undoOps.length > 0 ? { operations: undoOps } : undefined
 
       addEntry({
         source: 'transaction',
@@ -252,10 +376,11 @@ function registerIpcHandlers(): void {
         status: 'success',
         duration: Math.round(duration * 100) / 100,
         affectedRows: totalAffected,
-        database: getCurrentDatabase()
+        database: getCurrentDatabase(),
+        undoData
       })
 
-      return { success: true, data: { affectedRows: totalAffected } }
+      return { success: true, data: { affectedRows: totalAffected, undoData } }
     } catch (error) {
       const duration = performance.now() - start
       const errMsg = error instanceof Error ? error.message : String(error)
@@ -307,6 +432,65 @@ function registerIpcHandlers(): void {
     return { success: true }
   })
 
+  // --- Connections CRUD IPC handlers ---
+
+  ipcMain.handle('connections:list', async () => {
+    return getAllConnections()
+  })
+
+  ipcMain.handle('connections:create', async (_event, params) => {
+    return addConnection(params)
+  })
+
+  ipcMain.handle('connections:update', async (_event, params: { id: string; updates: Record<string, unknown> }) => {
+    return updateConnection(params.id, params.updates)
+  })
+
+  ipcMain.handle('connections:delete', async (_event, params: { id: string }) => {
+    return deleteConnection(params.id)
+  })
+
+  ipcMain.handle('connections:duplicate', async (_event, params: { id: string }) => {
+    return duplicateConnection(params.id)
+  })
+
+  ipcMain.handle('history:execute-undo', async (_event, params: { operations: Array<{ reverseSql: string; reverseParams: unknown[] }> }) => {
+    const combinedSql = params.operations.map((o) => inlineParams(o.reverseSql, o.reverseParams)).join(';\n')
+    const start = performance.now()
+    try {
+      const conn = getConnection()
+      let totalAffected = 0
+      await conn.begin(async (tx) => {
+        for (const op of params.operations) {
+          const result = await tx.unsafe(op.reverseSql, op.reverseParams)
+          totalAffected += result.count ?? 0
+        }
+      })
+      const duration = performance.now() - start
+      addEntry({
+        source: 'transaction',
+        sql: `-- UNDO\n${combinedSql}`,
+        status: 'success',
+        duration: Math.round(duration * 100) / 100,
+        affectedRows: totalAffected,
+        database: getCurrentDatabase()
+      })
+      return { success: true, data: { affectedRows: totalAffected } }
+    } catch (error) {
+      const duration = performance.now() - start
+      const errMsg = error instanceof Error ? error.message : String(error)
+      addEntry({
+        source: 'transaction',
+        sql: `-- UNDO (FAILED)\n${combinedSql}`,
+        status: 'error',
+        error: errMsg,
+        duration: Math.round(duration * 100) / 100,
+        database: getCurrentDatabase()
+      })
+      return { success: false, error: errMsg }
+    }
+  })
+
   ipcMain.handle('db:indexes', async (_event, params: { schema: string; table: string }) => {
     try {
       const sql = getConnection()
@@ -336,6 +520,7 @@ function registerIpcHandlers(): void {
 
 app.whenReady().then(() => {
   initHistory()
+  initConnections()
   registerIpcHandlers()
   createWindow()
 
@@ -352,6 +537,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', async () => {
   saveHistory()
+  saveConnections()
   if (isConnected()) {
     await disconnectDatabase()
   }

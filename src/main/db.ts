@@ -26,9 +26,10 @@ export function getCurrentDatabase(): string {
   return currentDatabase
 }
 
-export function connectToDatabase(params: ConnectionParams): Sql {
+export async function connectToDatabase(params: ConnectionParams): Promise<Sql> {
   if (sql) {
-    throw new Error('Already connected to a database. Disconnect first.')
+    await sql.end()
+    sql = null
   }
 
   currentDatabase = params.database

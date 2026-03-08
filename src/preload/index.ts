@@ -28,8 +28,22 @@ const api = {
 
   executeQuery: (query: string) => ipcRenderer.invoke('db:execute-query', { query }),
 
-  executeTransaction: (statements: Array<{ sql: string; params: unknown[] }>) =>
-    ipcRenderer.invoke('db:execute-transaction', { statements }),
+  executeTransaction: (params: {
+    statements: Array<{
+      sql: string
+      params: unknown[]
+      meta?: {
+        type: 'update' | 'insert' | 'delete'
+        schema: string
+        table: string
+        affectedColumns?: string[]
+        whereColumns?: string[]
+        whereValues?: unknown[]
+        fullRowData?: Record<string, unknown>
+      }
+    }>
+    primaryKeyColumns?: string[]
+  }) => ipcRenderer.invoke('db:execute-transaction', params),
 
   getForeignKeys: () => ipcRenderer.invoke('db:foreign-keys'),
 
@@ -42,7 +56,27 @@ const api = {
   searchHistory: (query: string, limit?: number) =>
     ipcRenderer.invoke('history:search', { query, limit }),
 
-  clearHistory: () => ipcRenderer.invoke('history:clear')
+  clearHistory: () => ipcRenderer.invoke('history:clear'),
+
+  executeUndo: (operations: Array<{ reverseSql: string; reverseParams: unknown[] }>) =>
+    ipcRenderer.invoke('history:execute-undo', { operations }),
+
+  // Saved connections
+  listConnections: () => ipcRenderer.invoke('connections:list'),
+
+  createConnection: (conn: {
+    name: string; color: string; host: string; port: number;
+    database: string; username: string; password: string
+  }) => ipcRenderer.invoke('connections:create', conn),
+
+  updateConnection: (id: string, updates: Record<string, unknown>) =>
+    ipcRenderer.invoke('connections:update', { id, updates }),
+
+  deleteConnection: (id: string) =>
+    ipcRenderer.invoke('connections:delete', { id }),
+
+  duplicateConnection: (id: string) =>
+    ipcRenderer.invoke('connections:duplicate', { id })
 }
 
 contextBridge.exposeInMainWorld('api', api)

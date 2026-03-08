@@ -57,9 +57,24 @@ export interface DbApi {
     }
   }>
 
-  executeTransaction(statements: Array<{ sql: string; params: unknown[] }>): Promise<{
+  executeTransaction(params: {
+    statements: Array<{
+      sql: string
+      params: unknown[]
+      meta?: {
+        type: 'update' | 'insert' | 'delete'
+        schema: string
+        table: string
+        affectedColumns?: string[]
+        whereColumns?: string[]
+        whereValues?: unknown[]
+        fullRowData?: Record<string, unknown>
+      }
+    }>
+    primaryKeyColumns?: string[]
+  }): Promise<{
     success: boolean
-    data?: { affectedRows: number }
+    data?: { affectedRows: number; undoData?: import('../shared/types').UndoData }
     error?: string
   }>
 
@@ -111,6 +126,25 @@ export interface DbApi {
   }>>
 
   clearHistory(): Promise<{ success: boolean }>
+
+  executeUndo(operations: Array<{ reverseSql: string; reverseParams: unknown[] }>): Promise<{
+    success: boolean
+    data?: { affectedRows: number }
+    error?: string
+  }>
+
+  listConnections(): Promise<import('../shared/types').SavedConnection[]>
+
+  createConnection(conn: {
+    name: string; color: string; host: string; port: number;
+    database: string; username: string; password: string
+  }): Promise<import('../shared/types').SavedConnection>
+
+  updateConnection(id: string, updates: Record<string, unknown>): Promise<import('../shared/types').SavedConnection | null>
+
+  deleteConnection(id: string): Promise<boolean>
+
+  duplicateConnection(id: string): Promise<import('../shared/types').SavedConnection | null>
 }
 
 declare global {

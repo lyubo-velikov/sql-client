@@ -22,9 +22,19 @@
           </svg>
         {/if}
         <span class="flex-1">{notif.message}</span>
+        {#if notif.actionLabel && notif.onAction}
+          <button
+            class="shrink-0 px-2 py-0.5 rounded text-[11px] font-semibold
+                   bg-white/15 hover:bg-white/25 transition-colors"
+            onclick={() => { notif.onAction?.(); notificationStore.remove(notif.id) }}
+          >
+            {notif.actionLabel}
+          </button>
+        {/if}
         <button
           class="shrink-0 p-0.5 rounded opacity-60 hover:opacity-100 transition-opacity"
           onclick={() => notificationStore.remove(notif.id)}
+          title="Dismiss"
         >
           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />

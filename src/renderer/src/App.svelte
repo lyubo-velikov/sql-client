@@ -2,17 +2,18 @@
   import './app.css'
   import { onMount } from 'svelte'
   import { tabStore } from './stores/tabs.svelte'
-  import { connectionStore } from './stores/connection.svelte'
+  import { connectionStore, getLegacyConnection } from './stores/connection.svelte'
+  import { savedConnectionsStore } from './stores/savedConnections.svelte'
   import Sidebar from './components/sidebar/Sidebar.svelte'
   import TabBar from './components/tabs/TabBar.svelte'
-  import ConnectionDialog from './components/ConnectionDialog.svelte'
+  import ConnectionManager from './components/ConnectionManager.svelte'
   import QueryEditor from './components/editor/QueryEditor.svelte'
   import TableView from './components/grid/TableView.svelte'
   import SchemaView from './components/schema/SchemaView.svelte'
   import Notifications from './components/Notifications.svelte'
   import HistoryDrawer from './components/history/HistoryDrawer.svelte'
 
-  let connectionDialogOpen = $state(false)
+  let connectionManagerOpen = $state(false)
   let sidebarCollapsed = $state(false)
   let showHistory = $state(false)
 
@@ -20,11 +21,31 @@
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'h') {
       e.preventDefault()
       showHistory = !showHistory
+      return
+    }
+
+    // Cmd+K to open connection manager
+    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+      e.preventDefault()
+      connectionManagerOpen = !connectionManagerOpen
+      return
+    }
+
+    // Cmd+1 through Cmd+9 to switch tabs
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
+      const num = parseInt(e.key, 10)
+      if (num >= 1 && num <= 9) {
+        e.preventDefault()
+        const idx = num - 1
+        if (idx < tabStore.tabs.length) {
+          tabStore.setActiveTab(tabStore.tabs[idx].id)
+        }
+      }
     }
   }
 
-  function openConnectionDialog(): void {
-    connectionDialogOpen = true
+  function openConnectionManager(): void {
+    connectionManagerOpen = true
   }
 
   function handleQueryChange(query: string): void {
@@ -33,12 +54,43 @@
     }
   }
 
-  onMount(() => {
-    // Open a default query tab only if no tabs were restored
+  onMount(async () => {
     tabStore.openDefaultTab()
 
-    // Auto-connect with persisted (or default) credentials
-    connectionStore.connect()
+    // Load saved connections
+    await savedConnectionsStore.load()
+
+    // Migrate legacy single connection if needed
+    if (savedConnectionsStore.connections.length === 0) {
+      const legacy = getLegacyConnection()
+      if (legacy) {
+        const saved = await savedConnectionsStore.create({
+          name: legacy.database,
+          color: '#10a37f',
+          ...legacy
+        })
+        await connectionStore.connectSaved(saved)
+        return
+      }
+    }
+
+    // Auto-connect to last active connection
+    const lastId = connectionStore.loadLastActiveId()
+    if (lastId) {
+      const conn = savedConnectionsStore.connections.find((c) => c.id === lastId)
+      if (conn) {
+        await connectionStore.connectSaved(conn)
+        return
+      }
+    }
+
+    // If we have saved connections but none active, show the manager
+    if (savedConnectionsStore.connections.length > 0) {
+      connectionManagerOpen = true
+    } else {
+      // No connections at all — show manager for first-time setup
+      connectionManagerOpen = true
+    }
   })
 </script>
 
@@ -46,7 +98,7 @@
 
 <div class="h-screen w-screen bg-surface-primary text-text-primary flex overflow-hidden">
   <!-- Sidebar -->
-  <Sidebar onOpenConnectionDialog={openConnectionDialog} bind:collapsed={sidebarCollapsed} />
+  <Sidebar onOpenConnectionDialog={openConnectionManager} bind:collapsed={sidebarCollapsed} />
 
   <!-- Main content area -->
   <div class="flex flex-col flex-1 min-w-0">
@@ -58,7 +110,7 @@
       {#if tabStore.activeTab}
         {#if tabStore.activeTab.type === 'query'}
           {#key tabStore.activeTabId}
-            <QueryEditor initialQuery={tabStore.activeTab.query ?? ''} onQueryChange={handleQueryChange} />
+            <QueryEditor initialQuery={tabStore.activeTab.query ?? ''} onQueryChange={handleQueryChange} onToggleHistory={() => { showHistory = !showHistory }} />
           {/key}
         {:else if tabStore.activeTab.type === 'table'}
           <TableView schema={tabStore.activeTab.schema ?? 'public'} table={tabStore.activeTab.table ?? ''} />
@@ -84,6 +136,6 @@
   </div>
 </div>
 
-<!-- Connection dialog modal -->
-<ConnectionDialog bind:open={connectionDialogOpen} />
+<!-- Connection manager modal -->
+<ConnectionManager bind:open={connectionManagerOpen} />
 <Notifications />

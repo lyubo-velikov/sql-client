@@ -114,7 +114,11 @@
 
     <!-- Connection indicator -->
     <div class="mb-2">
-      <div class="w-2.5 h-2.5 rounded-full {connectionStore.connected ? 'bg-accent' : 'bg-text-muted'}"></div>
+      {#if connectionStore.connected}
+        <div class="w-2.5 h-2.5 rounded-full" style="background-color: {connectionStore.activeConnectionColor}"></div>
+      {:else}
+        <div class="w-2.5 h-2.5 rounded-full bg-text-muted"></div>
+      {/if}
     </div>
 
     <ThemeToggle />
@@ -135,12 +139,21 @@
   <div class="flex flex-col w-[260px] bg-surface-secondary border-r border-border-primary shrink-0 select-none">
     <!-- Header: drag region + collapse -->
     <div class="flex items-center justify-between px-4 pt-10 pb-2">
-      <div class="flex items-center gap-2">
-        <div class="w-2 h-2 rounded-full {connectionStore.connected ? 'bg-accent' : 'bg-text-muted'} transition-colors duration-300"></div>
-        <span class="text-xs font-medium text-text-secondary uppercase tracking-wider">
-          {connectionStore.connected ? connectionStore.connectionInfo.database : 'Not connected'}
-        </span>
-      </div>
+      <button
+        class="flex items-center gap-2 hover:opacity-80 transition-opacity"
+        onclick={onOpenConnectionDialog}
+        title="Switch connection (Cmd+K)"
+      >
+        {#if connectionStore.connected}
+          <div class="w-2 h-2 rounded-full transition-colors duration-300" style="background-color: {connectionStore.activeConnectionColor}"></div>
+          <span class="text-xs font-medium text-text-secondary uppercase tracking-wider">
+            {connectionStore.activeConnectionName || connectionStore.connectionInfo.database}
+          </span>
+        {:else}
+          <div class="w-2 h-2 rounded-full bg-text-muted transition-colors duration-300"></div>
+          <span class="text-xs font-medium text-text-secondary uppercase tracking-wider">Not connected</span>
+        {/if}
+      </button>
       <button
         onclick={() => (collapsed = true)}
         class="p-1 text-text-muted hover:text-text-primary hover:bg-surface-hover rounded-md transition-colors duration-150"

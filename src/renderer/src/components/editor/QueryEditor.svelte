@@ -1,18 +1,34 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { EditorView, keymap, placeholder as cmPlaceholder } from '@codemirror/view'
-  import { EditorState, Prec } from '@codemirror/state'
+  import { EditorState, Prec, Compartment } from '@codemirror/state'
   import { sql, PostgreSQL } from '@codemirror/lang-sql'
   import { oneDark } from '@codemirror/theme-one-dark'
   import { basicSetup } from 'codemirror'
   import DataGrid from '../grid/DataGrid.svelte'
-  import QueryHistory from './QueryHistory.svelte'
+  import { historyStore } from '../../stores/history.svelte'
+  import { connectionStore } from '../../stores/connection.svelte'
 
-  let { initialQuery = '', onQueryChange }: { initialQuery?: string; onQueryChange?: (query: string) => void } = $props()
+  let { initialQuery = '', onQueryChange, onToggleHistory }: { initialQuery?: string; onQueryChange?: (query: string) => void; onToggleHistory?: () => void } = $props()
 
   // Editor state
   let editorContainer: HTMLDivElement | undefined = $state()
   let editorView: EditorView | undefined = $state()
+  const sqlCompartment = new Compartment()
+
+  function buildSqlSchema(): Record<string, string[]> {
+    const schema: Record<string, string[]> = {}
+    for (const t of connectionStore.tables) {
+      // Add both qualified and unqualified names
+      schema[`${t.schemaname}.${t.tablename}`] = []
+      schema[t.tablename] = []
+    }
+    return schema
+  }
+
+  function buildSqlExtension() {
+    return sql({ dialect: PostgreSQL, schema: buildSqlSchema() })
+  }
 
   // Results state
   let resultRows = $state<Record<string, unknown>[]>([])
@@ -22,10 +38,6 @@
   let executionTime = $state<number | null>(null)
   let queryError = $state<string | null>(null)
   let hasExecuted = $state(false)
-
-  // History state
-  let history = $state<Array<{ query: string; timestamp: number; success: boolean; rowCount?: number; duration?: number }>>([])
-  let showHistory = $state(false)
 
   // Splitter state
   let splitRatio = $state(40) // percentage for editor
@@ -94,48 +106,21 @@
         resultCount = result.data.rowCount
         executionTime = result.data.duration
 
-        // Add to history
-        addToHistory(queryText, true, result.data.rowCount, result.data.duration)
+        // History is logged automatically by the main process
       } else {
         queryError = result.error ?? 'Query failed'
         resultRows = []
         resultColumns = []
         resultCount = 0
-        addToHistory(queryText, false)
       }
     } catch (e) {
       queryError = e instanceof Error ? e.message : String(e)
       resultRows = []
       resultColumns = []
       resultCount = 0
-      addToHistory(queryText, false)
     } finally {
       executing = false
     }
-  }
-
-  function addToHistory(query: string, success: boolean, rowCount?: number, duration?: number) {
-    history = [
-      { query, timestamp: Date.now(), success, rowCount, duration },
-      ...history.slice(0, 49)
-    ]
-  }
-
-  function loadFromHistory(query: string) {
-    if (editorView) {
-      editorView.dispatch({
-        changes: {
-          from: 0,
-          to: editorView.state.doc.length,
-          insert: query
-        }
-      })
-    }
-    showHistory = false
-  }
-
-  function clearHistory() {
-    history = []
   }
 
   function handleResultPageChange(p: number) {
@@ -234,7 +219,7 @@
       doc: initialQuery || 'SELECT * FROM ',
       extensions: [
         basicSetup,
-        sql({ dialect: PostgreSQL }),
+        sqlCompartment.of(buildSqlExtension()),
         oneDark,
         customTheme,
         runQueryKeymap,
@@ -259,6 +244,16 @@
       window.removeEventListener('mousemove', handleMove)
       window.removeEventListener('mouseup', handleUp)
       editorView?.destroy()
+    }
+  })
+
+  // Reconfigure SQL autocomplete when connection tables change
+  $effect(() => {
+    const _tables = connectionStore.tables
+    if (editorView) {
+      editorView.dispatch({
+        effects: sqlCompartment.reconfigure(buildSqlExtension())
+      })
     }
   })
 </script>
@@ -307,16 +302,13 @@
 
       <button
         class="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
-        onclick={() => showHistory = !showHistory}
-        title="Query history"
+        onclick={() => onToggleHistory?.()}
+        title="Query history (Cmd+Shift+H)"
       >
         <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
         History
-        {#if history.length > 0}
-          <span class="text-[10px] bg-surface-tertiary px-1 rounded">{history.length}</span>
-        {/if}
       </button>
     </div>
 
@@ -405,15 +397,5 @@
     {/if}
   </div>
 
-  <!-- History panel overlay -->
-  {#if showHistory}
-    <div class="absolute top-0 right-0 h-full z-20">
-      <QueryHistory
-        {history}
-        onSelect={loadFromHistory}
-        onClear={clearHistory}
-        onClose={() => showHistory = false}
-      />
-    </div>
-  {/if}
+
 </div>

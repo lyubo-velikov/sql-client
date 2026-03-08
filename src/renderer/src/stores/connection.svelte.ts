@@ -1,3 +1,5 @@
+import type { SavedConnection } from '../../../shared/types'
+
 export interface ConnectionInfo {
   host: string
   port: number
@@ -21,21 +23,54 @@ export interface ForeignKey {
   foreign_column_name: string
 }
 
-const STORAGE_KEY = 'sql-client-connection'
+const ACTIVE_KEY = 'sql-client-active-connection-id'
+const LEGACY_KEY = 'sql-client-connection'
 
 const DEFAULT_CONNECTION: ConnectionInfo = {
   host: 'localhost',
   port: 5432,
-  database: 'n8n',
+  database: 'postgres',
   username: 'root',
   password: 'password'
 }
 
-function loadConnectionInfo(): ConnectionInfo {
+let connected = $state(false)
+let connecting = $state(false)
+let error = $state<string | null>(null)
+let connectionInfo = $state<ConnectionInfo>({ ...DEFAULT_CONNECTION })
+let tables = $state<TableInfo[]>([])
+let foreignKeys = $state<ForeignKey[]>([])
+
+// Active saved connection identity
+let activeConnectionId = $state<string | null>(null)
+let activeConnectionName = $state('')
+let activeConnectionColor = $state('#10a37f')
+
+function loadLastActiveId(): string | null {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY)
+    return localStorage.getItem(ACTIVE_KEY) ?? null
+  } catch {
+    return null
+  }
+}
+
+function saveLastActiveId(id: string | null): void {
+  try {
+    if (id) {
+      localStorage.setItem(ACTIVE_KEY, id)
+    } else {
+      localStorage.removeItem(ACTIVE_KEY)
+    }
+  } catch { /* ignore */ }
+}
+
+/** Migrate old single-connection localStorage to the new system */
+export function getLegacyConnection(): ConnectionInfo | null {
+  try {
+    const stored = localStorage.getItem(LEGACY_KEY)
     if (stored) {
       const parsed = JSON.parse(stored)
+      localStorage.removeItem(LEGACY_KEY)
       return {
         host: parsed.host ?? DEFAULT_CONNECTION.host,
         port: parsed.port ?? DEFAULT_CONNECTION.port,
@@ -44,33 +79,9 @@ function loadConnectionInfo(): ConnectionInfo {
         password: parsed.password ?? DEFAULT_CONNECTION.password
       }
     }
-  } catch {
-    // ignore parse errors
-  }
-  return { ...DEFAULT_CONNECTION }
+  } catch { /* ignore */ }
+  return null
 }
-
-function saveConnectionInfo(info: ConnectionInfo): void {
-  try {
-    // Explicitly extract plain values — Svelte 5 $state proxies don't always serialize correctly
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      host: info.host,
-      port: info.port,
-      database: info.database,
-      username: info.username,
-      password: info.password
-    }))
-  } catch {
-    // localStorage not available
-  }
-}
-
-let connected = $state(false)
-let connecting = $state(false)
-let error = $state<string | null>(null)
-let connectionInfo = $state<ConnectionInfo>(loadConnectionInfo())
-let tables = $state<TableInfo[]>([])
-let foreignKeys = $state<ForeignKey[]>([])
 
 async function connect(params?: ConnectionInfo): Promise<boolean> {
   if (params) {
@@ -91,8 +102,6 @@ async function connect(params?: ConnectionInfo): Promise<boolean> {
 
     if (result.success) {
       connected = true
-      // Persist on successful connection
-      saveConnectionInfo(connectionInfo)
       await refreshTables()
       await refreshForeignKeys()
       return true
@@ -110,16 +119,47 @@ async function connect(params?: ConnectionInfo): Promise<boolean> {
   }
 }
 
+async function connectSaved(saved: SavedConnection): Promise<boolean> {
+  activeConnectionId = saved.id
+  activeConnectionName = saved.name
+  activeConnectionColor = saved.color
+  saveLastActiveId(saved.id)
+
+  const success = await connect({
+    host: saved.host,
+    port: saved.port,
+    database: saved.database,
+    username: saved.username,
+    password: saved.password
+  })
+
+  if (success) {
+    // Update lastConnectedAt
+    try {
+      await window.api.updateConnection(saved.id, { lastConnectedAt: Date.now() })
+    } catch { /* ignore */ }
+  } else {
+    activeConnectionId = null
+    activeConnectionName = ''
+    activeConnectionColor = '#10a37f'
+    saveLastActiveId(null)
+  }
+
+  return success
+}
+
 async function disconnect(): Promise<void> {
   try {
     await window.api.disconnect()
-  } catch {
-    // ignore disconnect errors
-  }
+  } catch { /* ignore */ }
   connected = false
   tables = []
   foreignKeys = []
   error = null
+  activeConnectionId = null
+  activeConnectionName = ''
+  activeConnectionColor = '#10a37f'
+  saveLastActiveId(null)
 }
 
 async function refreshTables(): Promise<void> {
@@ -146,31 +186,24 @@ async function refreshForeignKeys(): Promise<void> {
 
 function setConnectionInfo(info: ConnectionInfo): void {
   connectionInfo = { ...info }
-  saveConnectionInfo(connectionInfo)
 }
 
 export const connectionStore = {
-  get connected() {
-    return connected
-  },
-  get connecting() {
-    return connecting
-  },
-  get error() {
-    return error
-  },
-  get connectionInfo() {
-    return connectionInfo
-  },
-  get tables() {
-    return tables
-  },
-  get foreignKeys() {
-    return foreignKeys
-  },
+  get connected() { return connected },
+  get connecting() { return connecting },
+  get error() { return error },
+  get connectionInfo() { return connectionInfo },
+  get tables() { return tables },
+  get foreignKeys() { return foreignKeys },
+  get activeConnectionId() { return activeConnectionId },
+  get activeConnectionName() { return activeConnectionName },
+  get activeConnectionColor() { return activeConnectionColor },
   connect,
+  connectSaved,
   disconnect,
   refreshTables,
   refreshForeignKeys,
-  setConnectionInfo
+  setConnectionInfo,
+  loadLastActiveId,
+  getLegacyConnection
 }

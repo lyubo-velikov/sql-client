@@ -1,3 +1,5 @@
+import type { UndoData } from '../../../shared/types'
+
 export interface HistoryEntryView {
   id: string
   timestamp: number
@@ -8,6 +10,7 @@ export interface HistoryEntryView {
   duration: number
   affectedRows?: number
   database: string
+  undoData?: UndoData
 }
 
 let entries = $state<HistoryEntryView[]>([])

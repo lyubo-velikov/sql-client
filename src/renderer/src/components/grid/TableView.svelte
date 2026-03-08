@@ -227,13 +227,32 @@
         ...buildInsertStatements(schema, table, changeBuffer.inserts)
       ]
 
-      const result = await window.api.executeTransaction(statements)
+      // Deep-clone to strip Svelte 5 reactive proxies before sending through IPC
+      const result = await window.api.executeTransaction(
+        JSON.parse(JSON.stringify({ statements, primaryKeyColumns }))
+      )
 
       if (result.success) {
         const count = statements.length
+        const undoData = result.data?.undoData
         changeBuffer.clearAll()
         await fetchData()
-        notificationStore.add('success', `${count} change${count !== 1 ? 's' : ''} saved successfully`)
+
+        if (undoData && undoData.operations.length > 0) {
+          // Store last undo for Cmd+Z
+          lastUndoData = undoData
+          clearTimeout(lastUndoTimer)
+          lastUndoTimer = setTimeout(() => { lastUndoData = null }, 30000)
+
+          notificationStore.add(
+            'success',
+            `${count} change${count !== 1 ? 's' : ''} saved`,
+            10000,
+            { label: 'Undo', onClick: () => executeUndo() }
+          )
+        } else {
+          notificationStore.add('success', `${count} change${count !== 1 ? 's' : ''} saved successfully`)
+        }
       } else {
         notificationStore.add('error', `Transaction failed: ${result.error}`)
       }
@@ -244,11 +263,36 @@
     }
   }
 
+  let lastUndoData = $state<import('../../../shared/types').UndoData | null>(null)
+  let lastUndoTimer: ReturnType<typeof setTimeout> | undefined
+
+  async function executeUndo() {
+    if (!lastUndoData) return
+    const ops = lastUndoData.operations
+    lastUndoData = null
+    try {
+      const result = await window.api.executeUndo(JSON.parse(JSON.stringify(ops)))
+      if (result.success) {
+        notificationStore.add('success', `Undo successful — ${result.data?.affectedRows ?? 0} rows affected`)
+        await fetchData()
+      } else {
+        notificationStore.add('error', `Undo failed: ${result.error}`)
+      }
+    } catch (e) {
+      notificationStore.add('error', `Undo failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     if ((e.metaKey || e.ctrlKey) && e.key === 's') {
       e.preventDefault()
       if (changeBuffer.hasChanges) {
         commitChanges()
+      }
+    } else if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+      if (lastUndoData) {
+        e.preventDefault()
+        executeUndo()
       }
     }
   }

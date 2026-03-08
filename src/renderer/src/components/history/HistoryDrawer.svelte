@@ -2,15 +2,30 @@
   import { onMount } from 'svelte'
   import { historyStore } from '../../stores/history.svelte'
   import { tabStore } from '../../stores/tabs.svelte'
+  import type { UndoData } from '../../../../shared/types'
+  import UndoConfirmDialog from './UndoConfirmDialog.svelte'
 
   let { open = $bindable(false) } = $props<{ open?: boolean }>()
 
   let drawerHeight = $state(280)
   let isDragging = $state(false)
   let expandedId = $state<string | null>(null)
+  let undoDialogOpen = $state(false)
+  let undoDialogData = $state<UndoData | null>(null)
   let searchInput = $state('')
   let searchTimer: ReturnType<typeof setTimeout> | undefined
   let copiedId = $state<string | null>(null)
+  let activeFilter = $state<'all' | 'manual' | 'transaction' | 'errors'>('all')
+
+  let filteredEntries = $derived.by(() => {
+    let entries = historyStore.entries
+    switch (activeFilter) {
+      case 'manual': return entries.filter((e) => e.source === 'manual')
+      case 'transaction': return entries.filter((e) => e.source === 'transaction')
+      case 'errors': return entries.filter((e) => e.status === 'error')
+      default: return entries
+    }
+  })
 
   onMount(() => {
     if (open) historyStore.refresh()
@@ -82,8 +97,35 @@
     open = false
   }
 
+  function exportHistory() {
+    const entries = historyStore.entries
+    if (entries.length === 0) return
+
+    const lines = entries.map((e) => {
+      const date = new Date(e.timestamp).toISOString()
+      const status = e.status === 'success' ? 'OK' : 'ERROR'
+      const dur = `${e.duration}ms`
+      const rows = e.affectedRows !== undefined ? `, ${e.affectedRows} rows` : ''
+      return `-- [${date}] ${status} (${dur}${rows}) [${e.database}]\n${e.sql};\n`
+    })
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/sql' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `query-history-${new Date().toISOString().slice(0, 10)}.sql`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   function toggleExpand(id: string) {
     expandedId = expandedId === id ? null : id
+  }
+
+  function openUndoDialog(data: UndoData) {
+    // Deep-clone to strip Svelte reactive proxies
+    undoDialogData = JSON.parse(JSON.stringify(data))
+    undoDialogOpen = true
   }
 </script>
 
@@ -106,6 +148,19 @@
         <span class="text-[10px] text-text-muted">{historyStore.total} entries</span>
       {/if}
 
+      <!-- Filter chips -->
+      <div class="flex items-center gap-1">
+        {#each [['all', 'All'], ['manual', 'SQL'], ['transaction', 'TXN'], ['errors', 'Errors']] as [key, label]}
+          <button
+            class="px-1.5 py-0.5 rounded text-[10px] transition-colors
+              {activeFilter === key
+                ? 'bg-accent/20 text-accent'
+                : 'text-text-muted hover:text-text-secondary hover:bg-surface-hover'}"
+            onclick={() => { activeFilter = key as typeof activeFilter }}
+          >{label}</button>
+        {/each}
+      </div>
+
       <div class="flex-1"></div>
 
       <!-- Search -->
@@ -122,6 +177,14 @@
           oninput={handleSearch}
         />
       </div>
+
+      <button
+        class="text-[11px] text-text-muted hover:text-accent transition-colors"
+        onclick={exportHistory}
+        title="Export history as .sql file"
+      >
+        Export
+      </button>
 
       <button
         class="text-[11px] text-text-muted hover:text-red-400 transition-colors"
@@ -146,11 +209,14 @@
     <div class="flex-1 overflow-y-auto min-h-0">
       {#if historyStore.loading}
         <div class="flex items-center justify-center h-full text-text-muted text-xs">Loading...</div>
-      {:else if historyStore.entries.length === 0}
-        <div class="flex items-center justify-center h-full text-text-muted text-xs">No history yet</div>
+      {:else if filteredEntries.length === 0}
+        <div class="flex items-center justify-center h-full text-text-muted text-xs">
+          {historyStore.entries.length === 0 ? 'No history yet' : 'No matching entries'}
+        </div>
       {:else}
-        {#each historyStore.entries as entry (entry.id)}
+        {#each filteredEntries as entry (entry.id)}
           {@const isExpanded = expandedId === entry.id}
+          {@const stmtCount = entry.source === 'transaction' ? entry.sql.split(';\n').filter(s => s.trim()).length : 0}
           <div class="border-b border-border-primary/50">
             <!-- Summary row -->
             <button
@@ -168,6 +234,11 @@
 
               <!-- SQL preview -->
               <span class="text-xs text-text-primary font-mono truncate flex-1">{truncateSql(entry.sql)}</span>
+
+              <!-- Statement count for multi-statement transactions -->
+              {#if stmtCount > 1}
+                <span class="text-[10px] bg-surface-tertiary text-text-muted px-1 rounded shrink-0">{stmtCount} stmts</span>
+              {/if}
 
               <!-- Metadata -->
               {#if entry.affectedRows !== undefined && entry.affectedRows > 0}
@@ -188,7 +259,18 @@
                 {#if entry.error}
                   <div class="mb-1.5 px-2 py-1 bg-red-900/20 rounded text-red-400 text-[11px]">{entry.error}</div>
                 {/if}
-                <pre class="text-[11px] font-mono text-text-secondary bg-surface-tertiary rounded p-2 overflow-x-auto max-h-40 whitespace-pre-wrap">{entry.sql}</pre>
+                {#if stmtCount > 1}
+                  <div class="bg-surface-tertiary rounded overflow-hidden max-h-40 overflow-y-auto">
+                    {#each entry.sql.split(';\n').filter(s => s.trim()) as stmt, i}
+                      <div class="px-2 py-1.5 {i > 0 ? 'border-t border-border-primary/30' : ''}">
+                        <span class="text-[10px] text-text-muted mr-1.5">{i + 1}.</span>
+                        <span class="text-[11px] font-mono text-text-secondary">{stmt.trim()}</span>
+                      </div>
+                    {/each}
+                  </div>
+                {:else}
+                  <pre class="text-[11px] font-mono text-text-secondary bg-surface-tertiary rounded p-2 overflow-x-auto max-h-40 whitespace-pre-wrap">{entry.sql}</pre>
+                {/if}
                 <div class="flex items-center gap-2 mt-1.5">
                   <button
                     class="text-[11px] text-accent hover:text-accent-hover transition-colors flex items-center gap-1"
@@ -212,6 +294,17 @@
                     </svg>
                     Run again
                   </button>
+                  {#if entry.undoData && entry.undoData.operations.length > 0}
+                    <button
+                      class="text-[11px] text-amber-400 hover:text-amber-300 transition-colors flex items-center gap-1"
+                      onclick={() => openUndoDialog(entry.undoData!)}
+                    >
+                      <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3"/>
+                      </svg>
+                      Undo
+                    </button>
+                  {/if}
                   <span class="text-[10px] text-text-muted ml-auto">{entry.database} &middot; {new Date(entry.timestamp).toLocaleString()}</span>
                 </div>
               </div>
@@ -222,3 +315,5 @@
     </div>
   </div>
 {/if}
+
+<UndoConfirmDialog bind:open={undoDialogOpen} undoData={undoDialogData} />
