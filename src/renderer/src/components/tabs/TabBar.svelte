@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tabStore } from '../../stores/tabs.svelte'
 
-  let { sidebarCollapsed = false } = $props<{ sidebarCollapsed?: boolean }>()
+  let { sidebarCollapsed = false, onToggleHistory } = $props<{ sidebarCollapsed?: boolean; onToggleHistory?: () => void }>()
 
   let queryCounter = $state(1)
 
@@ -110,6 +110,22 @@
       <line x1="5" y1="12" x2="19" y2="12"></line>
     </svg>
   </button>
+
+  <!-- History toggle -->
+  {#if onToggleHistory}
+    <button
+      onclick={onToggleHistory}
+      class="flex items-center justify-center w-9 shrink-0
+             text-text-muted hover:text-text-primary hover:bg-surface-tertiary
+             transition-colors duration-150 no-drag"
+      title="Toggle history (Cmd+Shift+H)"
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"></circle>
+        <polyline points="12 6 12 12 16 14"></polyline>
+      </svg>
+    </button>
+  {/if}
 </div>
 
 <style>

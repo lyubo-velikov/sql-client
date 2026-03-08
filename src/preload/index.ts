@@ -34,7 +34,15 @@ const api = {
   getForeignKeys: () => ipcRenderer.invoke('db:foreign-keys'),
 
   getIndexes: (schema: string, table: string) =>
-    ipcRenderer.invoke('db:indexes', { schema, table })
+    ipcRenderer.invoke('db:indexes', { schema, table }),
+
+  getHistory: (params: { limit?: number; offset?: number }) =>
+    ipcRenderer.invoke('history:get', params),
+
+  searchHistory: (query: string, limit?: number) =>
+    ipcRenderer.invoke('history:search', { query, limit }),
+
+  clearHistory: () => ipcRenderer.invoke('history:clear')
 }
 
 contextBridge.exposeInMainWorld('api', api)

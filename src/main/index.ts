@@ -2,8 +2,9 @@ import { app, BrowserWindow, shell, ipcMain } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import type { Sql } from 'postgres'
-import { connectToDatabase, disconnectDatabase, getConnection, isConnected } from './db'
+import { connectToDatabase, disconnectDatabase, getConnection, isConnected, getCurrentDatabase } from './db'
 import { performance } from 'perf_hooks'
+import { initHistory, saveHistory, addEntry, getEntries, searchEntries, clearEntries } from './history'
 
 interface FilterParam {
   column: string
@@ -192,11 +193,20 @@ function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('db:execute-query', async (_event, params: { query: string }) => {
+    const start = performance.now()
     try {
       const sql = getConnection()
-      const start = performance.now()
       const result = await sql.unsafe(params.query)
       const duration = performance.now() - start
+
+      addEntry({
+        source: 'manual',
+        sql: params.query,
+        status: 'success',
+        duration: Math.round(duration * 100) / 100,
+        affectedRows: result.count ?? 0,
+        database: getCurrentDatabase()
+      })
 
       return {
         success: true,
@@ -208,11 +218,23 @@ function registerIpcHandlers(): void {
         }
       }
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : String(error) }
+      const duration = performance.now() - start
+      const errMsg = error instanceof Error ? error.message : String(error)
+      addEntry({
+        source: 'manual',
+        sql: params.query,
+        status: 'error',
+        error: errMsg,
+        duration: Math.round(duration * 100) / 100,
+        database: getCurrentDatabase()
+      })
+      return { success: false, error: errMsg }
     }
   })
 
   ipcMain.handle('db:execute-transaction', async (_event, params: { statements: Array<{ sql: string; params: unknown[] }> }) => {
+    const combinedSql = params.statements.map((s) => s.sql).join(';\n')
+    const start = performance.now()
     try {
       const conn = getConnection()
       let totalAffected = 0
@@ -222,9 +244,30 @@ function registerIpcHandlers(): void {
           totalAffected += result.count ?? 0
         }
       })
+      const duration = performance.now() - start
+
+      addEntry({
+        source: 'transaction',
+        sql: combinedSql,
+        status: 'success',
+        duration: Math.round(duration * 100) / 100,
+        affectedRows: totalAffected,
+        database: getCurrentDatabase()
+      })
+
       return { success: true, data: { affectedRows: totalAffected } }
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : String(error) }
+      const duration = performance.now() - start
+      const errMsg = error instanceof Error ? error.message : String(error)
+      addEntry({
+        source: 'transaction',
+        sql: combinedSql,
+        status: 'error',
+        error: errMsg,
+        duration: Math.round(duration * 100) / 100,
+        database: getCurrentDatabase()
+      })
+      return { success: false, error: errMsg }
     }
   })
 
@@ -247,6 +290,21 @@ function registerIpcHandlers(): void {
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) }
     }
+  })
+
+  // --- History IPC handlers ---
+
+  ipcMain.handle('history:get', async (_event, params: { limit?: number; offset?: number }) => {
+    return getEntries(params)
+  })
+
+  ipcMain.handle('history:search', async (_event, params: { query: string; limit?: number }) => {
+    return searchEntries(params.query, params.limit)
+  })
+
+  ipcMain.handle('history:clear', async () => {
+    clearEntries()
+    return { success: true }
   })
 
   ipcMain.handle('db:indexes', async (_event, params: { schema: string; table: string }) => {
@@ -277,6 +335,7 @@ function registerIpcHandlers(): void {
 }
 
 app.whenReady().then(() => {
+  initHistory()
   registerIpcHandlers()
   createWindow()
 
@@ -292,6 +351,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', async () => {
+  saveHistory()
   if (isConnected()) {
     await disconnectDatabase()
   }

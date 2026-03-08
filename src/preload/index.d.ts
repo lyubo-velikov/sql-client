@@ -82,6 +82,35 @@ export interface DbApi {
     success: boolean
     data?: Array<{ indexname: string; indexdef: string }>
   }>
+
+  getHistory(params: { limit?: number; offset?: number }): Promise<{
+    entries: Array<{
+      id: string
+      timestamp: number
+      source: 'manual' | 'transaction'
+      sql: string
+      status: 'success' | 'error'
+      error?: string
+      duration: number
+      affectedRows?: number
+      database: string
+    }>
+    total: number
+  }>
+
+  searchHistory(query: string, limit?: number): Promise<Array<{
+    id: string
+    timestamp: number
+    source: 'manual' | 'transaction'
+    sql: string
+    status: 'success' | 'error'
+    error?: string
+    duration: number
+    affectedRows?: number
+    database: string
+  }>>
+
+  clearHistory(): Promise<{ success: boolean }>
 }
 
 declare global {

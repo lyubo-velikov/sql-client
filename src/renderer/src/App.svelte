@@ -10,9 +10,18 @@
   import TableView from './components/grid/TableView.svelte'
   import SchemaView from './components/schema/SchemaView.svelte'
   import Notifications from './components/Notifications.svelte'
+  import HistoryDrawer from './components/history/HistoryDrawer.svelte'
 
   let connectionDialogOpen = $state(false)
   let sidebarCollapsed = $state(false)
+  let showHistory = $state(false)
+
+  function handleGlobalKeydown(e: KeyboardEvent) {
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'h') {
+      e.preventDefault()
+      showHistory = !showHistory
+    }
+  }
 
   function openConnectionDialog(): void {
     connectionDialogOpen = true
@@ -33,6 +42,8 @@
   })
 </script>
 
+<svelte:window onkeydown={handleGlobalKeydown} />
+
 <div class="h-screen w-screen bg-surface-primary text-text-primary flex overflow-hidden">
   <!-- Sidebar -->
   <Sidebar onOpenConnectionDialog={openConnectionDialog} bind:collapsed={sidebarCollapsed} />
@@ -40,7 +51,7 @@
   <!-- Main content area -->
   <div class="flex flex-col flex-1 min-w-0">
     <!-- Tab bar -->
-    <TabBar {sidebarCollapsed} />
+    <TabBar {sidebarCollapsed} onToggleHistory={() => { showHistory = !showHistory }} />
 
     <!-- Tab content -->
     <div class="flex-1 overflow-hidden">
@@ -67,6 +78,9 @@
         </div>
       {/if}
     </div>
+
+    <!-- History drawer -->
+    <HistoryDrawer bind:open={showHistory} />
   </div>
 </div>
 

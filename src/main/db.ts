@@ -9,6 +9,7 @@ export interface ConnectionParams {
 }
 
 let sql: Sql | null = null
+let currentDatabase: string = ''
 
 export function getConnection(): Sql {
   if (!sql) {
@@ -21,11 +22,16 @@ export function isConnected(): boolean {
   return sql !== null
 }
 
+export function getCurrentDatabase(): string {
+  return currentDatabase
+}
+
 export function connectToDatabase(params: ConnectionParams): Sql {
   if (sql) {
     throw new Error('Already connected to a database. Disconnect first.')
   }
 
+  currentDatabase = params.database
   sql = postgres({
     host: params.host,
     port: params.port,
