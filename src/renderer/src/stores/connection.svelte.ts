@@ -21,16 +21,54 @@ export interface ForeignKey {
   foreign_column_name: string
 }
 
-let connected = $state(false)
-let connecting = $state(false)
-let error = $state<string | null>(null)
-let connectionInfo = $state<ConnectionInfo>({
+const STORAGE_KEY = 'sql-client-connection'
+
+const DEFAULT_CONNECTION: ConnectionInfo = {
   host: 'localhost',
   port: 5432,
   database: 'n8n',
   username: 'root',
   password: 'password'
-})
+}
+
+function loadConnectionInfo(): ConnectionInfo {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY)
+    if (stored) {
+      const parsed = JSON.parse(stored)
+      return {
+        host: parsed.host ?? DEFAULT_CONNECTION.host,
+        port: parsed.port ?? DEFAULT_CONNECTION.port,
+        database: parsed.database ?? DEFAULT_CONNECTION.database,
+        username: parsed.username ?? DEFAULT_CONNECTION.username,
+        password: parsed.password ?? DEFAULT_CONNECTION.password
+      }
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return { ...DEFAULT_CONNECTION }
+}
+
+function saveConnectionInfo(info: ConnectionInfo): void {
+  try {
+    // Explicitly extract plain values — Svelte 5 $state proxies don't always serialize correctly
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      host: info.host,
+      port: info.port,
+      database: info.database,
+      username: info.username,
+      password: info.password
+    }))
+  } catch {
+    // localStorage not available
+  }
+}
+
+let connected = $state(false)
+let connecting = $state(false)
+let error = $state<string | null>(null)
+let connectionInfo = $state<ConnectionInfo>(loadConnectionInfo())
 let tables = $state<TableInfo[]>([])
 let foreignKeys = $state<ForeignKey[]>([])
 
@@ -53,6 +91,8 @@ async function connect(params?: ConnectionInfo): Promise<boolean> {
 
     if (result.success) {
       connected = true
+      // Persist on successful connection
+      saveConnectionInfo(connectionInfo)
       await refreshTables()
       await refreshForeignKeys()
       return true
@@ -106,6 +146,7 @@ async function refreshForeignKeys(): Promise<void> {
 
 function setConnectionInfo(info: ConnectionInfo): void {
   connectionInfo = { ...info }
+  saveConnectionInfo(connectionInfo)
 }
 
 export const connectionStore = {

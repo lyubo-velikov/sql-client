@@ -28,6 +28,9 @@ const api = {
 
   executeQuery: (query: string) => ipcRenderer.invoke('db:execute-query', { query }),
 
+  executeTransaction: (statements: Array<{ sql: string; params: unknown[] }>) =>
+    ipcRenderer.invoke('db:execute-transaction', { statements }),
+
   getForeignKeys: () => ipcRenderer.invoke('db:foreign-keys'),
 
   getIndexes: (schema: string, table: string) =>

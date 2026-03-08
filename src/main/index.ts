@@ -212,6 +212,22 @@ function registerIpcHandlers(): void {
     }
   })
 
+  ipcMain.handle('db:execute-transaction', async (_event, params: { statements: Array<{ sql: string; params: unknown[] }> }) => {
+    try {
+      const conn = getConnection()
+      let totalAffected = 0
+      await conn.begin(async (tx) => {
+        for (const stmt of params.statements) {
+          const result = await tx.unsafe(stmt.sql, stmt.params)
+          totalAffected += result.count ?? 0
+        }
+      })
+      return { success: true, data: { affectedRows: totalAffected } }
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
   ipcMain.handle('db:foreign-keys', async () => {
     try {
       const sql = getConnection()

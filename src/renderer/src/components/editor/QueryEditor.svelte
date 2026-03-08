@@ -8,7 +8,7 @@
   import DataGrid from '../grid/DataGrid.svelte'
   import QueryHistory from './QueryHistory.svelte'
 
-  let { initialQuery = '' }: { initialQuery?: string } = $props()
+  let { initialQuery = '', onQueryChange }: { initialQuery?: string; onQueryChange?: (query: string) => void } = $props()
 
   // Editor state
   let editorContainer: HTMLDivElement | undefined = $state()
@@ -219,6 +219,17 @@
       }
     })
 
+    // Debounced content sync for persistence
+    let syncTimer: ReturnType<typeof setTimeout> | undefined
+    const contentSync = EditorView.updateListener.of((update) => {
+      if (update.docChanged && onQueryChange) {
+        clearTimeout(syncTimer)
+        syncTimer = setTimeout(() => {
+          onQueryChange(update.state.doc.toString())
+        }, 500)
+      }
+    })
+
     const startState = EditorState.create({
       doc: initialQuery || 'SELECT * FROM ',
       extensions: [
@@ -227,6 +238,7 @@
         oneDark,
         customTheme,
         runQueryKeymap,
+        contentSync,
         cmPlaceholder('Enter SQL query...'),
         EditorView.lineWrapping
       ]

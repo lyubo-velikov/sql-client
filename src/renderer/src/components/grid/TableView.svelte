@@ -2,6 +2,9 @@
   import { untrack } from 'svelte'
   import DataGrid from './DataGrid.svelte'
   import { tabStore } from '../../stores/tabs.svelte'
+  import { createChangeBuffer } from '../../stores/changeBuffer.svelte'
+  import { notificationStore } from '../../stores/notifications.svelte'
+  import { buildUpdateStatements, buildInsertStatements, buildDeleteStatements } from '../../utils/sqlBuilder'
 
   let { schema, table }: { schema: string; table: string } = $props()
 
@@ -15,6 +18,13 @@
   let sortDirection = $state<'asc' | 'desc' | undefined>(undefined)
   let error = $state<string | null>(null)
   let columnTypes = $state<Map<string, string>>(new Map())
+  let primaryKeyColumns = $state<string[]>([])
+  let saving = $state(false)
+
+  // Change buffer for tracking edits
+  const changeBuffer = createChangeBuffer()
+
+  let editable = $derived(primaryKeyColumns.length > 0)
 
   // Filter state
   interface Filter {
@@ -97,10 +107,13 @@
       if (result.success && result.data) {
         columns = result.data.map((col) => col.column_name)
         const types = new Map<string, string>()
+        const pks: string[] = []
         for (const col of result.data) {
           types.set(col.column_name, col.data_type)
+          if (col.is_primary_key) pks.push(col.column_name)
         }
         columnTypes = types
+        primaryKeyColumns = pks
       }
     } catch (e) {
       console.error('Failed to fetch schema:', e)
@@ -152,11 +165,19 @@
   }
 
   function handlePageChange(newPage: number) {
+    if (changeBuffer.hasChanges) {
+      if (!confirm('You have unsaved changes. Discard them?')) return
+      changeBuffer.clearAll()
+    }
     page = newPage
     pinActiveTab()
   }
 
   function handleSort(column: string, direction: 'asc' | 'desc') {
+    if (changeBuffer.hasChanges) {
+      if (!confirm('You have unsaved changes. Discard them?')) return
+      changeBuffer.clearAll()
+    }
     sortColumn = column
     sortDirection = direction
     page = 1
@@ -164,21 +185,86 @@
   }
 
   function handlePageSizeChange(newSize: number) {
+    if (changeBuffer.hasChanges) {
+      if (!confirm('You have unsaved changes. Discard them?')) return
+      changeBuffer.clearAll()
+    }
     pageSize = newSize
     pinActiveTab()
   }
 
+  function handleCellEdit(rowIndex: number, column: string, originalValue: unknown, newValue: unknown) {
+    changeBuffer.setCellEdit(rowIndex, column, originalValue, newValue)
+    pinActiveTab()
+  }
+
+  function handleDeleteRow(rowIndex: number) {
+    changeBuffer.toggleRowDeleted(rowIndex)
+    pinActiveTab()
+  }
+
+  function handleAddRow() {
+    changeBuffer.addInsertRow(columns)
+    pinActiveTab()
+  }
+
+  function discardChanges() {
+    changeBuffer.clearAll()
+  }
+
+  async function commitChanges() {
+    if (!changeBuffer.hasChanges || saving) return
+    if (primaryKeyColumns.length === 0) {
+      notificationStore.add('error', 'Cannot save: table has no primary key')
+      return
+    }
+
+    saving = true
+    try {
+      const statements = [
+        ...buildDeleteStatements(schema, table, changeBuffer.deletes, rows, primaryKeyColumns),
+        ...buildUpdateStatements(schema, table, changeBuffer.edits, rows, primaryKeyColumns),
+        ...buildInsertStatements(schema, table, changeBuffer.inserts)
+      ]
+
+      const result = await window.api.executeTransaction(statements)
+
+      if (result.success) {
+        const count = statements.length
+        changeBuffer.clearAll()
+        await fetchData()
+        notificationStore.add('success', `${count} change${count !== 1 ? 's' : ''} saved successfully`)
+      } else {
+        notificationStore.add('error', `Transaction failed: ${result.error}`)
+      }
+    } catch (e) {
+      notificationStore.add('error', `Save failed: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      saving = false
+    }
+  }
+
+  function handleKeydown(e: KeyboardEvent) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+      e.preventDefault()
+      if (changeBuffer.hasChanges) {
+        commitChanges()
+      }
+    }
+  }
+
   function refresh() {
+    if (changeBuffer.hasChanges) {
+      if (!confirm('You have unsaved changes. Discard them?')) return
+      changeBuffer.clearAll()
+    }
     fetchData()
   }
 
   // Reset everything and fetch fresh data when table changes.
-  // IMPORTANT: use untrack for fetchData/fetchSchema calls so this effect
-  // only tracks schema/table — not page/sort/filters read inside fetchData.
   $effect(() => {
     const _s = schema
     const _t = table
-    // Reset state (writes don't create tracking dependencies)
     page = 1
     sortColumn = undefined
     sortDirection = undefined
@@ -188,7 +274,8 @@
     columns = []
     totalCount = 0
     error = null
-    // Fetch with untrack so internal reads don't become deps of this effect
+    primaryKeyColumns = []
+    changeBuffer.clearAll()
     untrack(() => {
       fetchSchema()
       fetchData()
@@ -196,7 +283,6 @@
   })
 
   // Refetch when pagination or sort changes.
-  // untrack prevents schema/table/filters from becoming deps of this effect.
   $effect(() => {
     const _p = page
     const _ps = pageSize
@@ -205,6 +291,8 @@
     untrack(() => fetchData())
   })
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 <div class="flex flex-col h-full">
   <!-- Toolbar -->
@@ -223,7 +311,52 @@
       </span>
     {/if}
 
+    <!-- Pending changes indicator -->
+    {#if changeBuffer.hasChanges}
+      <div class="flex items-center gap-2 ml-2">
+        <span class="text-amber-400 text-xs font-medium">
+          {changeBuffer.pendingChangeCount} unsaved
+        </span>
+        <button
+          class="text-[11px] text-text-muted hover:text-text-secondary transition-colors"
+          onclick={discardChanges}
+        >
+          Discard
+        </button>
+        <button
+          class="flex items-center gap-1 text-[11px] bg-accent text-white px-2 py-0.5 rounded hover:bg-accent-hover transition-colors disabled:opacity-50"
+          onclick={commitChanges}
+          disabled={saving}
+        >
+          {#if saving}Saving...{:else}Save{/if}
+          <kbd class="text-[9px] opacity-70 ml-0.5">&#8984;S</kbd>
+        </button>
+      </div>
+    {/if}
+
     <div class="flex-1"></div>
+
+    <!-- No PK warning -->
+    {#if !loading && columns.length > 0 && primaryKeyColumns.length === 0}
+      <span class="text-amber-400/70 text-[11px]" title="Table has no primary key — editing is disabled">
+        No PK (read-only)
+      </span>
+    {/if}
+
+    <!-- Add row button -->
+    {#if editable}
+      <button
+        class="flex items-center gap-1 px-2 py-1 rounded text-xs text-text-secondary
+          hover:text-text-primary hover:bg-surface-hover transition-colors"
+        onclick={handleAddRow}
+        title="Add new row"
+      >
+        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+        </svg>
+        Row
+      </button>
+    {/if}
 
     <button
       class="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs transition-colors
@@ -244,6 +377,26 @@
         <span class="text-[10px] bg-accent/25 px-1 rounded">{activeFilterCount}</span>
       {/if}
     </button>
+
+    <!-- Delete selected row -->
+    {#if editable && rows.length > 0}
+      <button
+        class="flex items-center gap-1 px-2 py-1 rounded text-xs text-text-secondary
+          hover:text-red-400 hover:bg-red-900/20 transition-colors"
+        onclick={() => {
+          const sel = document.querySelector('tr.bg-surface-active')
+          if (sel) {
+            const idx = Array.from(sel.parentElement?.children ?? []).indexOf(sel)
+            if (idx >= 0) handleDeleteRow(idx)
+          }
+        }}
+        title="Toggle delete selected row (Backspace)"
+      >
+        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+        </svg>
+      </button>
+    {/if}
 
     <button
       class="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs text-text-secondary
@@ -373,6 +526,13 @@
       onSort={handleSort}
       {sortColumn}
       {sortDirection}
+      {editable}
+      {primaryKeyColumns}
+      {changeBuffer}
+      onCellEdit={handleCellEdit}
+      onDeleteRow={handleDeleteRow}
+      onAddRow={handleAddRow}
+      insertedRows={changeBuffer.inserts}
     />
   </div>
 </div>

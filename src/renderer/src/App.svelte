@@ -9,6 +9,7 @@
   import QueryEditor from './components/editor/QueryEditor.svelte'
   import TableView from './components/grid/TableView.svelte'
   import SchemaView from './components/schema/SchemaView.svelte'
+  import Notifications from './components/Notifications.svelte'
 
   let connectionDialogOpen = $state(false)
   let sidebarCollapsed = $state(false)
@@ -17,11 +18,17 @@
     connectionDialogOpen = true
   }
 
+  function handleQueryChange(query: string): void {
+    if (tabStore.activeTabId) {
+      tabStore.updateTab(tabStore.activeTabId, { query })
+    }
+  }
+
   onMount(() => {
-    // Open a default query tab
+    // Open a default query tab only if no tabs were restored
     tabStore.openDefaultTab()
 
-    // Auto-connect with default credentials
+    // Auto-connect with persisted (or default) credentials
     connectionStore.connect()
   })
 </script>
@@ -39,7 +46,9 @@
     <div class="flex-1 overflow-hidden">
       {#if tabStore.activeTab}
         {#if tabStore.activeTab.type === 'query'}
-          <QueryEditor initialQuery={tabStore.activeTab.query ?? ''} />
+          {#key tabStore.activeTabId}
+            <QueryEditor initialQuery={tabStore.activeTab.query ?? ''} onQueryChange={handleQueryChange} />
+          {/key}
         {:else if tabStore.activeTab.type === 'table'}
           <TableView schema={tabStore.activeTab.schema ?? 'public'} table={tabStore.activeTab.table ?? ''} />
         {:else if tabStore.activeTab.type === 'schema'}
@@ -63,3 +72,4 @@
 
 <!-- Connection dialog modal -->
 <ConnectionDialog bind:open={connectionDialogOpen} />
+<Notifications />

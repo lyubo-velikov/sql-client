@@ -1,4 +1,6 @@
 <script lang="ts">
+  import type { createChangeBuffer, RowInsert } from '../../stores/changeBuffer.svelte'
+
   let {
     rows = [],
     columns = [],
@@ -10,7 +12,14 @@
     onPageSizeChange,
     onSort,
     sortColumn = undefined,
-    sortDirection = undefined
+    sortDirection = undefined,
+    editable = false,
+    primaryKeyColumns = [],
+    changeBuffer = undefined,
+    onCellEdit = undefined,
+    onDeleteRow = undefined,
+    onAddRow = undefined,
+    insertedRows = []
   }: {
     rows: Record<string, unknown>[]
     columns: string[]
@@ -23,10 +32,21 @@
     onSort: (column: string, direction: 'asc' | 'desc') => void
     sortColumn?: string
     sortDirection?: 'asc' | 'desc'
+    editable?: boolean
+    primaryKeyColumns?: string[]
+    changeBuffer?: ReturnType<typeof createChangeBuffer>
+    onCellEdit?: (rowIndex: number, column: string, originalValue: unknown, newValue: unknown) => void
+    onDeleteRow?: (rowIndex: number) => void
+    onAddRow?: () => void
+    insertedRows?: RowInsert[]
   } = $props()
 
   let selectedRow = $state<number | null>(null)
   let copiedCell = $state<{ row: number; col: string } | null>(null)
+
+  // Editing state
+  let editingCell = $state<{ row: number; col: string; isInsert?: boolean; tempId?: string } | null>(null)
+  let editValue = $state('')
 
   let totalPages = $derived(Math.max(1, Math.ceil(totalCount / pageSize)))
   let startRow = $derived((page - 1) * pageSize + 1)
@@ -91,7 +111,6 @@
     if (typeof value === 'number' || typeof value === 'bigint') return 'number'
     if (value instanceof Date) return 'date'
     if (typeof value === 'object') return 'json'
-    // Check if string looks like a date
     if (typeof value === 'string') {
       const datePattern = /^\d{4}-\d{2}-\d{2}(T|\s)\d{2}:\d{2}/
       if (datePattern.test(value)) return 'date'
@@ -110,6 +129,75 @@
     } catch {
       // Clipboard not available
     }
+  }
+
+  // --- Editing functions ---
+
+  function startEditing(rowIndex: number, col: string, value: unknown, isInsert = false, tempId?: string) {
+    if (!editable) return
+    // Don't allow editing PK columns on existing rows
+    if (!isInsert && primaryKeyColumns.includes(col)) return
+
+    editingCell = { row: rowIndex, col, isInsert, tempId }
+    editValue = value === null || value === undefined ? '' : String(value)
+  }
+
+  function commitEdit() {
+    if (!editingCell) return
+    const { row, col, isInsert, tempId } = editingCell
+
+    // Determine the actual value: empty string means NULL for editable cells
+    const newValue = editValue === '' ? null : editValue
+
+    if (isInsert && tempId && changeBuffer) {
+      changeBuffer.setInsertCellValue(tempId, col, newValue)
+    } else if (onCellEdit) {
+      const originalValue = rows[row]?.[col] ?? null
+      onCellEdit(row, col, originalValue, newValue)
+    }
+
+    editingCell = null
+  }
+
+  function cancelEdit() {
+    editingCell = null
+  }
+
+  function handleEditKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      commitEdit()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      cancelEdit()
+    } else if (e.key === 'Tab') {
+      e.preventDefault()
+      commitEdit()
+      // Move to next column
+      if (editingCell) return // already cleared
+      // Find next editable column... handled by commitEdit clearing state
+    }
+  }
+
+  function handleCellClick(rowIndex: number, col: string, value: unknown, isInsert = false, tempId?: string) {
+    if (editable) {
+      // Commit any current edit first
+      if (editingCell) commitEdit()
+      startEditing(rowIndex, col, value, isInsert, tempId)
+    }
+  }
+
+  function handleCellDblClick(rowIndex: number, col: string, value: unknown) {
+    if (!editable) {
+      copyCell(rowIndex, col, value)
+    }
+    // If editable, single click already started editing
+  }
+
+  function getDisplayValue(rowIndex: number, col: string, originalValue: unknown): unknown {
+    if (!changeBuffer) return originalValue
+    const edited = changeBuffer.getEditedValue(rowIndex, col)
+    return edited !== undefined ? edited : originalValue
   }
 
   // Skeleton rows for loading state
@@ -143,7 +231,7 @@
           {/each}
         </tbody>
       </table>
-    {:else if rows.length === 0}
+    {:else if rows.length === 0 && insertedRows.length === 0}
       <!-- Empty state -->
       <div class="flex flex-col items-center justify-center h-full text-text-muted py-16">
         <svg class="w-12 h-12 mb-3 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
@@ -165,6 +253,11 @@
               >
                 <div class="flex items-center gap-1.5">
                   <span class="truncate">{col}</span>
+                  {#if primaryKeyColumns.includes(col)}
+                    <svg class="w-2.5 h-2.5 text-amber-500 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M12 1L15.09 7.26L22 8.27L17 13.14L18.18 20.02L12 16.77L5.82 20.02L7 13.14L2 8.27L8.91 7.26L12 1Z"/>
+                    </svg>
+                  {/if}
                   {#if sortColumn === col}
                     <span class="text-accent text-[10px] flex-shrink-0">
                       {sortDirection === 'asc' ? '\u25B2' : '\u25BC'}
@@ -179,38 +272,101 @@
         </thead>
         <tbody>
           {#each rows as row, rowIndex}
+            {@const isDeleted = changeBuffer?.isDeleted(rowIndex) ?? false}
             <tr
               class="border-b border-border-primary transition-colors duration-75 cursor-default
-                {selectedRow === rowIndex ? 'bg-surface-active' : rowIndex % 2 === 0 ? 'bg-surface-primary' : 'bg-surface-secondary/30'}
-                hover:bg-surface-hover"
+                {isDeleted ? 'bg-red-900/15 opacity-50' :
+                 selectedRow === rowIndex ? 'bg-surface-active' :
+                 rowIndex % 2 === 0 ? 'bg-surface-primary' : 'bg-surface-secondary/30'}
+                {isDeleted ? '' : 'hover:bg-surface-hover'}"
               onclick={() => selectedRow = selectedRow === rowIndex ? null : rowIndex}
             >
-              <td class="datagrid-td text-center text-text-muted w-12 select-none text-[11px]">
-                {startRow + rowIndex}
+              <!-- Row number / status indicator -->
+              <td class="datagrid-td text-center w-12 select-none text-[11px]
+                {isDeleted ? 'text-red-400' :
+                 (changeBuffer && [...(changeBuffer.edits.keys())].some(k => k.startsWith(rowIndex + ':'))) ? 'text-amber-400' :
+                 'text-text-muted'}">
+                {#if isDeleted}
+                  <span title="Marked for deletion">-</span>
+                {:else}
+                  {startRow + rowIndex}
+                {/if}
               </td>
               {#each columns as col}
-                {@const value = row[col]}
-                {@const cellType = getCellType(value)}
+                {@const originalValue = row[col]}
+                {@const displayValue = getDisplayValue(rowIndex, col, originalValue)}
+                {@const cellType = getCellType(displayValue)}
+                {@const isCellEdited = changeBuffer?.isEdited(rowIndex, col) ?? false}
+                {@const isEditing = editingCell?.row === rowIndex && editingCell?.col === col && !editingCell?.isInsert}
                 <td
                   class="datagrid-td font-mono relative
                     {cellType === 'number' ? 'text-right' : ''}
-                    {copiedCell?.row === rowIndex && copiedCell?.col === col ? 'bg-accent/10' : ''}"
-                  title={getFullValue(value)}
-                  ondblclick={() => copyCell(rowIndex, col, value)}
+                    {copiedCell?.row === rowIndex && copiedCell?.col === col ? 'bg-accent/10' : ''}
+                    {isCellEdited ? 'cell-edited' : ''}
+                    {isDeleted ? 'line-through' : ''}"
+                  title={isDeleted ? 'Marked for deletion' : getFullValue(displayValue)}
+                  onclick={(e) => {
+                    if (editable && !isDeleted) { e.stopPropagation(); handleCellClick(rowIndex, col, displayValue) }
+                  }}
+                  ondblclick={() => handleCellDblClick(rowIndex, col, displayValue)}
                 >
-                  {#if cellType === 'null'}
+                  {#if isEditing}
+                    <!-- svelte-ignore a11y_autofocus -->
+                    <input
+                      type="text"
+                      class="cell-edit-input"
+                      bind:value={editValue}
+                      onkeydown={handleEditKeydown}
+                      onblur={commitEdit}
+                      autofocus
+                    />
+                  {:else if cellType === 'null'}
                     <span class="italic text-text-muted text-xs">NULL</span>
                   {:else if cellType === 'boolean'}
                     <span class="inline-flex items-center px-1.5 py-0 rounded text-[11px] font-medium
-                      {value ? 'bg-green-900/40 text-green-400' : 'bg-red-900/40 text-red-400'}">
-                      {value ? 'true' : 'false'}
+                      {displayValue ? 'bg-green-900/40 text-green-400' : 'bg-red-900/40 text-red-400'}">
+                      {displayValue ? 'true' : 'false'}
                     </span>
                   {:else if cellType === 'json'}
-                    <span class="text-amber-400/80 font-mono text-xs">{formatCellValue(value)}</span>
+                    <span class="text-amber-400/80 font-mono text-xs">{formatCellValue(displayValue)}</span>
                   {:else if cellType === 'number'}
-                    <span class="text-blue-400/80 tabular-nums">{formatCellValue(value)}</span>
+                    <span class="text-blue-400/80 tabular-nums">{formatCellValue(displayValue)}</span>
                   {:else if cellType === 'date'}
-                    <span class="text-purple-400/70">{formatCellValue(value)}</span>
+                    <span class="text-purple-400/70">{formatCellValue(displayValue)}</span>
+                  {:else}
+                    <span class="truncate block max-w-xs">{formatCellValue(displayValue)}</span>
+                  {/if}
+                </td>
+              {/each}
+            </tr>
+          {/each}
+
+          <!-- Inserted rows -->
+          {#each insertedRows as insertRow, insertIdx}
+            <tr class="border-b border-border-primary bg-green-900/10 hover:bg-green-900/20 transition-colors duration-75 cursor-default">
+              <td class="datagrid-td text-center w-12 select-none text-[11px] text-green-400">
+                <span title="New row">+</span>
+              </td>
+              {#each columns as col}
+                {@const value = insertRow.values[col]}
+                {@const cellType = getCellType(value)}
+                {@const isEditing = editingCell?.isInsert && editingCell?.tempId === insertRow.tempId && editingCell?.col === col}
+                <td
+                  class="datagrid-td font-mono relative {cellType === 'number' ? 'text-right' : ''}"
+                  onclick={(e) => { e.stopPropagation(); handleCellClick(insertIdx, col, value, true, insertRow.tempId) }}
+                >
+                  {#if isEditing}
+                    <!-- svelte-ignore a11y_autofocus -->
+                    <input
+                      type="text"
+                      class="cell-edit-input"
+                      bind:value={editValue}
+                      onkeydown={handleEditKeydown}
+                      onblur={commitEdit}
+                      autofocus
+                    />
+                  {:else if cellType === 'null'}
+                    <span class="italic text-text-muted text-xs">NULL</span>
                   {:else}
                     <span class="truncate block max-w-xs">{formatCellValue(value)}</span>
                   {/if}
@@ -259,7 +415,7 @@
             disabled={page <= 1 || loading}
             title="First page"
           >
-            \u00AB
+            &laquo;
           </button>
           <button
             class="datagrid-page-btn"
@@ -267,7 +423,7 @@
             disabled={page <= 1 || loading}
             title="Previous page"
           >
-            \u2039
+            &lsaquo;
           </button>
           <span class="px-2 text-text-primary tabular-nums">
             {page} / {totalPages}
@@ -278,7 +434,7 @@
             disabled={page >= totalPages || loading}
             title="Next page"
           >
-            \u203A
+            &rsaquo;
           </button>
           <button
             class="datagrid-page-btn"
@@ -286,7 +442,7 @@
             disabled={page >= totalPages || loading}
             title="Last page"
           >
-            \u00BB
+            &raquo;
           </button>
         </div>
       </div>
@@ -322,6 +478,25 @@
     max-width: 400px;
     color: var(--color-text-primary);
     vertical-align: middle;
+  }
+
+  .cell-edited {
+    border-left: 2px solid #f59e0b;
+    background: rgba(245, 158, 11, 0.08);
+  }
+
+  .cell-edit-input {
+    width: 100%;
+    height: 100%;
+    background: var(--color-surface-tertiary);
+    border: 1px solid var(--color-accent);
+    border-radius: 2px;
+    padding: 2px 6px;
+    font-size: 12px;
+    font-family: var(--font-mono);
+    color: var(--color-text-primary);
+    outline: none;
+    box-sizing: border-box;
   }
 
   .datagrid-page-btn {

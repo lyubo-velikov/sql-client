@@ -57,6 +57,12 @@ export interface DbApi {
     }
   }>
 
+  executeTransaction(statements: Array<{ sql: string; params: unknown[] }>): Promise<{
+    success: boolean
+    data?: { affectedRows: number }
+    error?: string
+  }>
+
   getForeignKeys(): Promise<{
     success: boolean
     data?: Array<{
