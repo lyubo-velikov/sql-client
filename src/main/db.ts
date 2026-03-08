@@ -1,0 +1,48 @@
+import postgres, { Sql } from 'postgres'
+
+export interface ConnectionParams {
+  host: string
+  port: number
+  database: string
+  username: string
+  password: string
+}
+
+let sql: Sql | null = null
+
+export function getConnection(): Sql {
+  if (!sql) {
+    throw new Error('Not connected to a database')
+  }
+  return sql
+}
+
+export function isConnected(): boolean {
+  return sql !== null
+}
+
+export function connectToDatabase(params: ConnectionParams): Sql {
+  if (sql) {
+    throw new Error('Already connected to a database. Disconnect first.')
+  }
+
+  sql = postgres({
+    host: params.host,
+    port: params.port,
+    database: params.database,
+    username: params.username,
+    password: params.password,
+    max: 10,
+    idle_timeout: 0,
+    connect_timeout: 10
+  })
+
+  return sql
+}
+
+export async function disconnectDatabase(): Promise<void> {
+  if (sql) {
+    await sql.end()
+    sql = null
+  }
+}

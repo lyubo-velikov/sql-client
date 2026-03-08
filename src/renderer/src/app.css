@@ -1,0 +1,95 @@
+@import "tailwindcss";
+
+@theme {
+  /* Dark theme colors - ChatGPT inspired */
+  --color-surface-primary: #0a0a0a;
+  --color-surface-secondary: #111111;
+  --color-surface-tertiary: #1a1a1a;
+  --color-surface-hover: #222222;
+  --color-surface-active: #2a2a2a;
+  --color-border-primary: #2a2a2a;
+  --color-border-secondary: #333333;
+  --color-text-primary: #ececec;
+  --color-text-secondary: #9a9a9a;
+  --color-text-muted: #666666;
+  --color-accent: #10a37f;
+  --color-accent-hover: #0d8c6d;
+  --color-danger: #ef4444;
+  --color-warning: #f59e0b;
+  --color-info: #3b82f6;
+
+  /* Light theme overrides */
+  --color-light-surface-primary: #ffffff;
+  --color-light-surface-secondary: #f9fafb;
+  --color-light-surface-tertiary: #f3f4f6;
+  --color-light-surface-hover: #e5e7eb;
+  --color-light-surface-active: #d1d5db;
+  --color-light-border-primary: #e5e7eb;
+  --color-light-border-secondary: #d1d5db;
+  --color-light-text-primary: #111827;
+  --color-light-text-secondary: #6b7280;
+  --color-light-text-muted: #9ca3af;
+}
+
+:root {
+  --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', 'JetBrains Mono', monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+}
+
+/* Light theme class-based overrides */
+html.light {
+  --color-surface-primary: var(--color-light-surface-primary);
+  --color-surface-secondary: var(--color-light-surface-secondary);
+  --color-surface-tertiary: var(--color-light-surface-tertiary);
+  --color-surface-hover: var(--color-light-surface-hover);
+  --color-surface-active: var(--color-light-surface-active);
+  --color-border-primary: var(--color-light-border-primary);
+  --color-border-secondary: var(--color-light-border-secondary);
+  --color-text-primary: var(--color-light-text-primary);
+  --color-text-secondary: var(--color-light-text-secondary);
+  --color-text-muted: var(--color-light-text-muted);
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100vh;
+  width: 100vw;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  height: 100vh;
+  width: 100vw;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-secondary);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
+/* CodeMirror theme overrides */
+.cm-editor {
+  height: 100%;
+  font-family: var(--font-mono) !important;
+  font-size: 13px;
+}
+
+.cm-editor .cm-scroller {
+  font-family: var(--font-mono) !important;
+}
