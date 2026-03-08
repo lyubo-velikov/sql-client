@@ -78,12 +78,6 @@
     connectionManagerOpen = true
   }
 
-  function handleQueryChange(query: string): void {
-    if (tabStore.activeTabId) {
-      tabStore.updateTab(tabStore.activeTabId, { query })
-    }
-  }
-
   async function createNewQueryFile() {
     const result = await queryFilesStore.createFile()
     tabStore.openFile(result.filePath, result.name)
@@ -146,19 +140,22 @@
     <!-- Tab bar -->
     <TabBar {sidebarCollapsed} onToggleHistory={() => { showHistory = !showHistory }} />
 
-    <!-- Tab content -->
-    <div class="flex-1 overflow-hidden">
-      {#if tabStore.activeTab}
-        {#if tabStore.activeTab.type === 'query'}
-          {#key tabStore.activeTabId}
-            <QueryEditor initialQuery={tabStore.activeTab.query ?? ''} filePath={tabStore.activeTab.filePath} onQueryChange={handleQueryChange} onToggleHistory={() => { showHistory = !showHistory }} />
-          {/key}
-        {:else if tabStore.activeTab.type === 'table'}
-          <TableView schema={tabStore.activeTab.schema ?? 'public'} table={tabStore.activeTab.table ?? ''} />
-        {:else if tabStore.activeTab.type === 'schema'}
-          <SchemaView schema={tabStore.activeTab.schema ?? 'public'} table={tabStore.activeTab.table ?? ''} />
-        {/if}
-      {:else}
+    <!-- Tab content — all tabs stay mounted, only active one is visible -->
+    <div class="flex-1 overflow-hidden relative">
+      {#each tabStore.tabs as tab (tab.id)}
+        {@const isActive = tab.id === tabStore.activeTabId}
+        <div class="absolute inset-0" style:display={isActive ? '' : 'none'}>
+          {#if tab.type === 'query'}
+            <QueryEditor initialQuery={tab.query ?? ''} filePath={tab.filePath} onQueryChange={(q) => tabStore.updateTab(tab.id, { query: q })} onToggleHistory={() => { showHistory = !showHistory }} />
+          {:else if tab.type === 'table'}
+            <TableView schema={tab.schema ?? 'public'} table={tab.table ?? ''} />
+          {:else if tab.type === 'schema'}
+            <SchemaView schema={tab.schema ?? 'public'} table={tab.table ?? ''} />
+          {/if}
+        </div>
+      {/each}
+
+      {#if tabStore.tabs.length === 0}
         <!-- Empty state: no tabs open -->
         <div class="h-full flex flex-col items-center justify-center text-text-muted">
           <svg class="mb-4 opacity-20" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">

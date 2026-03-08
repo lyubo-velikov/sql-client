@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tabStore } from '../../stores/tabs.svelte'
+  import { connectionStore } from '../../stores/connection.svelte'
 
   let { schema, table }: { schema: string; table: string } = $props()
 
@@ -124,7 +125,10 @@
   $effect(() => {
     const _s = schema
     const _t = table
-    fetchAll()
+    const _connected = connectionStore.connected
+    if (_connected) {
+      fetchAll()
+    }
   })
 </script>
 

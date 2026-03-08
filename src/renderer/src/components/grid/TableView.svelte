@@ -5,6 +5,7 @@
   import { createChangeBuffer } from '../../stores/changeBuffer.svelte'
   import { notificationStore } from '../../stores/notifications.svelte'
   import { buildUpdateStatements, buildInsertStatements, buildDeleteStatements } from '../../utils/sqlBuilder'
+  import { connectionStore } from '../../stores/connection.svelte'
 
   let { schema, table }: { schema: string; table: string } = $props()
 
@@ -305,10 +306,12 @@
     fetchData()
   }
 
-  // Reset everything and fetch fresh data when table changes.
+  // Reset everything and fetch fresh data when table or connection changes.
+  // Only fetch when connected — avoids errors on app startup before connection is ready.
   $effect(() => {
     const _s = schema
     const _t = table
+    const _connected = connectionStore.connected
     page = 1
     sortColumn = undefined
     sortDirection = undefined
@@ -320,19 +323,23 @@
     error = null
     primaryKeyColumns = []
     changeBuffer.clearAll()
-    untrack(() => {
-      fetchSchema()
-      fetchData()
-    })
+    if (_connected) {
+      untrack(() => {
+        fetchSchema()
+        fetchData()
+      })
+    }
   })
 
-  // Refetch when pagination or sort changes.
+  // Refetch when pagination or sort changes (only when connected).
   $effect(() => {
     const _p = page
     const _ps = pageSize
     const _sc = sortColumn
     const _sd = sortDirection
-    untrack(() => fetchData())
+    if (connectionStore.connected) {
+      untrack(() => fetchData())
+    }
   })
 </script>
 
