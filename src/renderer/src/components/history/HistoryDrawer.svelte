@@ -76,8 +76,8 @@
   }
 
   function truncateSql(sql: string): string {
-    const first = sql.split('\n')[0].trim()
-    return first.length > 100 ? first.slice(0, 97) + '...' : first
+    const oneLiner = sql.replace(/\s+/g, ' ').trim()
+    return oneLiner.length > 120 ? oneLiner.slice(0, 117) + '...' : oneLiner
   }
 
   async function copySql(sql: string, id: string) {

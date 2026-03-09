@@ -30,8 +30,8 @@ async function refresh() {
       entries = result.entries
       total = result.total
     }
-  } catch (e) {
-    console.error('Failed to load history:', e)
+  } catch {
+    // silently ignore – no logger available in renderer
   } finally {
     loading = false
   }

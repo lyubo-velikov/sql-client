@@ -14,7 +14,6 @@ function getLogPath(): string {
 export function initLogger(): void {
   const path = getLogPath()
   writeFileSync(path, `--- Session started: ${new Date().toISOString()} ---\n`, 'utf-8')
-  console.log(`[Logger] Writing logs to: ${path}`)
 }
 
 export function log(...args: unknown[]): void {

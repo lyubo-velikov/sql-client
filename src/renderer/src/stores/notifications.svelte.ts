@@ -1,3 +1,5 @@
+import { generateId } from '../../../shared/utils'
+
 export interface Notification {
   id: string
   type: 'success' | 'error' | 'warning' | 'info'
@@ -14,7 +16,7 @@ function addNotification(
   timeout = 4000,
   action?: { label: string; onClick: () => void }
 ) {
-  const id = `notif-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+  const id = generateId('notif')
   notifications.push({
     id,
     type,

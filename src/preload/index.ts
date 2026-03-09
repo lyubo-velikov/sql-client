@@ -107,10 +107,10 @@ const api = {
   }) => ipcRenderer.invoke('ai:send-message', params),
   stopAiStream: () => ipcRenderer.invoke('ai:stop-stream'),
   listAiConversations: () => ipcRenderer.invoke('ai:list-conversations'),
-  saveAiConversation: (conversation: any) => ipcRenderer.invoke('ai:save-conversation', { conversation }),
+  saveAiConversation: (conversation: import('../shared/types').AiConversation) => ipcRenderer.invoke('ai:save-conversation', { conversation }),
   deleteAiConversation: (id: string) => ipcRenderer.invoke('ai:delete-conversation', { id }),
   onAiStreamChunk: (callback: (data: { messageId: string; content: string }) => void) => {
-    const handler = (_event: any, data: any) => callback(data)
+    const handler = (_event: Electron.IpcRendererEvent, data: { messageId: string; content: string }) => callback(data)
     ipcRenderer.on('ai:stream-chunk', handler)
     return () => { ipcRenderer.removeListener('ai:stream-chunk', handler) }
   }

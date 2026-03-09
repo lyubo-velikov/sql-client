@@ -1,4 +1,6 @@
 import type { SavedConnection } from '../../../shared/types'
+import { DEFAULT_CONNECTION_COLOR } from '../../../shared/constants'
+import { formatError } from '../../../shared/utils'
 
 export interface ConnectionInfo {
   host: string
@@ -44,7 +46,7 @@ let foreignKeys = $state<ForeignKey[]>([])
 // Active saved connection identity
 let activeConnectionId = $state<string | null>(null)
 let activeConnectionName = $state('')
-let activeConnectionColor = $state('#10a37f')
+let activeConnectionColor = $state(DEFAULT_CONNECTION_COLOR)
 
 function loadLastActiveId(): string | null {
   try {
@@ -111,7 +113,7 @@ async function connect(params?: ConnectionInfo): Promise<boolean> {
       return false
     }
   } catch (err) {
-    error = err instanceof Error ? err.message : String(err)
+    error = formatError(err)
     connected = false
     return false
   } finally {
@@ -141,7 +143,7 @@ async function connectSaved(saved: SavedConnection): Promise<boolean> {
   } else {
     activeConnectionId = null
     activeConnectionName = ''
-    activeConnectionColor = '#10a37f'
+    activeConnectionColor = DEFAULT_CONNECTION_COLOR
     saveLastActiveId(null)
   }
 
@@ -158,7 +160,7 @@ async function disconnect(): Promise<void> {
   error = null
   activeConnectionId = null
   activeConnectionName = ''
-  activeConnectionColor = '#10a37f'
+  activeConnectionColor = DEFAULT_CONNECTION_COLOR
   saveLastActiveId(null)
 }
 

@@ -1,4 +1,6 @@
 import type { AiMessage, AiConversation } from '../../../shared/types'
+import { generateId, formatError } from '../../../shared/utils'
+import { DEFAULT_AI_MODEL, SCHEMA_TABLE_LIMIT } from '../../../shared/constants'
 import { connectionStore } from './connection.svelte'
 import { tabStore } from './tabs.svelte'
 
@@ -9,35 +11,9 @@ let streaming = $state(false)
 let streamingContent = $state('')
 let streamingMessageId = $state<string | null>(null)
 let hasApiKey = $state(false)
-let model = $state('claude-sonnet-4-6')
+let model = $state(DEFAULT_AI_MODEL)
 let loaded = $state(false)
 let unsubscribeStream: (() => void) | null = null
-
-function generateId(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-}
-
-function buildSchemaContext(): string {
-  const tables = connectionStore.tables
-  if (tables.length === 0) return 'No tables available. Not connected to a database.'
-
-  const lines: string[] = []
-  for (const t of tables) {
-    lines.push(`-- ${t.schemaname}.${t.tablename} (~${t.row_count} rows)`)
-  }
-
-  // Also include foreign key relationships
-  const fks = connectionStore.foreignKeys
-  if (fks.length > 0) {
-    lines.push('')
-    lines.push('-- Foreign key relationships:')
-    for (const fk of fks) {
-      lines.push(`-- ${fk.table_schema}.${fk.table_name}.${fk.column_name} -> ${fk.foreign_table_schema}.${fk.foreign_table_name}.${fk.foreign_column_name}`)
-    }
-  }
-
-  return lines.join('\n')
-}
 
 // Fetch detailed schema for context (columns, types, PKs)
 let schemaCache = $state<string>('')
@@ -52,8 +28,8 @@ async function getDetailedSchemaContext(): Promise<string> {
 
   const lines: string[] = []
 
-  // Limit to 30 tables for context size
-  const subset = tables.slice(0, 30)
+  // Limit to SCHEMA_TABLE_LIMIT tables for context size
+  const subset = tables.slice(0, SCHEMA_TABLE_LIMIT)
   for (const t of subset) {
     try {
       const result = await window.api.getTableSchema(t.schemaname, t.tablename)
@@ -72,8 +48,8 @@ async function getDetailedSchemaContext(): Promise<string> {
     }
   }
 
-  if (tables.length > 30) {
-    lines.push(`-- ... and ${tables.length - 30} more tables`)
+  if (tables.length > SCHEMA_TABLE_LIMIT) {
+    lines.push(`-- ... and ${tables.length - SCHEMA_TABLE_LIMIT} more tables`)
   }
 
   const fks = connectionStore.foreignKeys
@@ -163,7 +139,7 @@ async function sendMessage(text: string): Promise<void> {
   // Build message history for context
   const history = messages.map((m) => ({ role: m.role, content: m.content }))
 
-  const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const messageId = generateId('msg')
   streamingMessageId = messageId
 
   try {
@@ -220,7 +196,7 @@ async function sendMessage(text: string): Promise<void> {
     messages = [...messages, {
       id: generateId(),
       role: 'assistant',
-      content: `Error: ${err instanceof Error ? err.message : String(err)}`,
+      content: `Error: ${formatError(err)}`,
       timestamp: Date.now()
     }]
   }

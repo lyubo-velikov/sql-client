@@ -1,3 +1,5 @@
+import { generateId as makeId } from '../../../shared/utils'
+
 export interface Tab {
   id: string
   type: 'query' | 'table' | 'schema'
@@ -64,10 +66,6 @@ let tabs = $state<Tab[]>(restoredTabs)
 let activeTabId = $state<string | null>(loadActiveTabId(restoredTabs))
 let activeTab = $derived(tabs.find((t) => t.id === activeTabId) ?? null)
 
-function generateId(): string {
-  return `tab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-}
-
 function addTab(tab: Omit<Tab, 'id'>): string {
   // If opening a table or schema tab, check if one already exists
   if (tab.type === 'table' || tab.type === 'schema') {
@@ -101,7 +99,7 @@ function addTab(tab: Omit<Tab, 'id'>): string {
     }
   }
 
-  const id = generateId()
+  const id = makeId('tab')
   tabs.push({ ...tab, id })
   activeTabId = id
   scheduleSave()

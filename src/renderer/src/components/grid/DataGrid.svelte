@@ -386,6 +386,66 @@
     return edited !== undefined ? edited : originalValue
   }
 
+  // Context menu state
+  let contextMenu = $state<{ x: number; y: number; rowIndex: number; col?: string } | null>(null)
+
+  function handleContextMenu(e: MouseEvent, rowIndex: number, col?: string) {
+    e.preventDefault()
+    contextMenu = { x: e.clientX, y: e.clientY, rowIndex, col }
+  }
+
+  function closeContextMenu() {
+    contextMenu = null
+  }
+
+  async function copyRowAsJson() {
+    if (contextMenu === null) return
+    const row = rows[contextMenu.rowIndex]
+    if (!row) return
+    await navigator.clipboard.writeText(JSON.stringify(row, null, 2))
+    closeContextMenu()
+  }
+
+  async function copyRowAsLine() {
+    if (contextMenu === null) return
+    const row = rows[contextMenu.rowIndex]
+    if (!row) return
+    const values = columns.map((col) => {
+      const v = row[col]
+      if (v === null || v === undefined) return 'NULL'
+      if (typeof v === 'object') return JSON.stringify(v)
+      return String(v)
+    })
+    await navigator.clipboard.writeText(values.join('\t'))
+    closeContextMenu()
+  }
+
+  async function copyCellFromMenu() {
+    if (contextMenu === null || !contextMenu.col) return
+    const row = rows[contextMenu.rowIndex]
+    if (!row) return
+    await copyCell(contextMenu.rowIndex, contextMenu.col, row[contextMenu.col])
+    closeContextMenu()
+  }
+
+  async function copyRowAsInsert() {
+    if (contextMenu === null) return
+    const row = rows[contextMenu.rowIndex]
+    if (!row) return
+    const cols = columns.map((c) => `"${c}"`).join(', ')
+    const vals = columns.map((col) => {
+      const v = row[col]
+      if (v === null || v === undefined) return 'NULL'
+      if (typeof v === 'number' || typeof v === 'bigint') return String(v)
+      if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE'
+      if (typeof v === 'object') return `'${JSON.stringify(v).replace(/'/g, "''")}'`
+      return `'${String(v).replace(/'/g, "''")}'`
+    }).join(', ')
+    const table = document.querySelector('[data-context-table]')?.getAttribute('data-context-table') || 'table_name'
+    await navigator.clipboard.writeText(`INSERT INTO ${table} (${cols}) VALUES (${vals});`)
+    closeContextMenu()
+  }
+
   // Skeleton rows for loading state
   let skeletonRows = $derived(Array.from({ length: Math.min(pageSize, 15) }, (_, i) => i))
 </script>
@@ -466,6 +526,7 @@
                  rowIndex % 2 === 0 ? 'bg-surface-primary' : 'bg-surface-secondary/30'}
                 {isDeleted ? '' : 'hover:bg-surface-hover'}"
               onclick={() => selectRow(selectedRow === rowIndex ? null : rowIndex)}
+              oncontextmenu={(e) => handleContextMenu(e, rowIndex)}
             >
               <!-- Row number / status indicator -->
               <td class="datagrid-td text-center w-12 select-none text-[11px]
@@ -495,6 +556,7 @@
                     if (editable && !isDeleted) { e.stopPropagation(); handleCellClick(rowIndex, col, displayValue) }
                   }}
                   ondblclick={() => handleCellDblClick(rowIndex, col, displayValue)}
+                  oncontextmenu={(e) => { e.stopPropagation(); handleContextMenu(e, rowIndex, col) }}
                 >
                   {#if isEditing}
                     <!-- svelte-ignore a11y_autofocus -->
@@ -634,6 +696,46 @@
             &raquo;
           </button>
         </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Context menu -->
+  {#if contextMenu}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="fixed inset-0 z-50" onclick={closeContextMenu} oncontextmenu={(e) => { e.preventDefault(); closeContextMenu() }}>
+      <div
+        class="context-menu"
+        style="left: {contextMenu.x}px; top: {contextMenu.y}px;"
+        onclick={(e) => e.stopPropagation()}
+      >
+        {#if contextMenu.col}
+          <button class="context-menu-item" onclick={copyCellFromMenu}>
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+            </svg>
+            Copy cell
+          </button>
+          <div class="context-menu-separator"></div>
+        {/if}
+        <button class="context-menu-item" onclick={copyRowAsLine}>
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 7h18M3 12h18M3 17h18"/>
+          </svg>
+          Copy row (tab-separated)
+        </button>
+        <button class="context-menu-item" onclick={copyRowAsJson}>
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5"/>
+          </svg>
+          Copy row (JSON)
+        </button>
+        <button class="context-menu-item" onclick={copyRowAsInsert}>
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/>
+          </svg>
+          Copy as INSERT
+        </button>
       </div>
     </div>
   {/if}
@@ -897,5 +999,43 @@
   :global(html.light) .bool-false {
     background: #fee2e2;
     color: #b91c1c;
+  }
+
+  /* Context menu */
+  .context-menu {
+    position: fixed;
+    z-index: 60;
+    min-width: 180px;
+    padding: 4px 0;
+    background: var(--color-surface-secondary);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+
+  .context-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 12px;
+    font-size: 12px;
+    color: var(--color-text-secondary);
+    background: none;
+    border: none;
+    cursor: pointer;
+    transition: all 0.1s;
+    text-align: left;
+  }
+
+  .context-menu-item:hover {
+    background: var(--color-surface-hover);
+    color: var(--color-text-primary);
+  }
+
+  .context-menu-separator {
+    height: 1px;
+    margin: 4px 8px;
+    background: var(--color-border-primary);
   }
 </style>

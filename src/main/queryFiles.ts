@@ -3,6 +3,7 @@ import { join, basename, extname, dirname } from 'path'
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync, renameSync, watch } from 'fs'
 import { homedir } from 'os'
 import type { QueryFile } from '../shared/types'
+import { log } from './logger'
 
 const SETTINGS_FILE = 'settings.json'
 
@@ -27,7 +28,7 @@ function saveSettings(settings: Record<string, unknown>): void {
   try {
     writeFileSync(getSettingsPath(), JSON.stringify(settings, null, 2), 'utf-8')
   } catch (e) {
-    console.error('Failed to save settings:', e)
+    log('Failed to save settings:', e)
   }
 }
 
@@ -40,7 +41,7 @@ export function initQueryFiles(): void {
     try {
       mkdirSync(queriesDir, { recursive: true })
     } catch (e) {
-      console.error('Failed to create queries directory:', e)
+      log('Failed to create queries directory:', e)
     }
   }
 

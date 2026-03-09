@@ -1,43 +1,18 @@
-import { app } from 'electron'
-import { join } from 'path'
-import { readFileSync, writeFileSync, existsSync } from 'fs'
 import type { SavedConnection } from '../shared/types'
+import { generateId } from '../shared/utils'
+import { createJsonStore } from './persistence'
 
 let connections: SavedConnection[] = []
-let filePath: string | null = null
 
-function getFilePath(): string {
-  if (!filePath) {
-    filePath = join(app.getPath('userData'), 'connections.json')
-  }
-  return filePath
-}
-
-function generateId(): string {
-  return `conn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
-}
+const store = createJsonStore<SavedConnection[]>('connections.json', [])
 
 export function initConnections(): void {
-  try {
-    const path = getFilePath()
-    if (existsSync(path)) {
-      const data = readFileSync(path, 'utf-8')
-      const parsed = JSON.parse(data)
-      if (Array.isArray(parsed)) {
-        connections = parsed
-      }
-    }
-  } catch {
-    connections = []
-  }
+  const loaded = store.load()
+  connections = Array.isArray(loaded) ? loaded : []
 }
 
 export function saveConnections(): void {
-  try {
-    writeFileSync(getFilePath(), JSON.stringify(connections, null, 2), 'utf-8')
-  } catch (e) {
-    console.error('Failed to save connections:', e)
-  }
+  store.save(connections)
 }
 
 export function getAllConnections(): SavedConnection[] {
@@ -54,7 +29,7 @@ export function addConnection(
   const now = Date.now()
   const saved: SavedConnection = {
     ...conn,
-    id: generateId(),
+    id: generateId('conn'),
     createdAt: now,
     updatedAt: now
   }

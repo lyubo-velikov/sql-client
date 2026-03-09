@@ -1,8 +1,9 @@
-import { app, safeStorage } from 'electron'
-import { join } from 'path'
-import { readFileSync, writeFileSync, existsSync } from 'fs'
+import { safeStorage } from 'electron'
 import Anthropic from '@anthropic-ai/sdk'
 import type { AiConversation } from '../shared/types'
+import { formatError } from '../shared/utils'
+import { DEFAULT_AI_MODEL, AI_MAX_TOKENS, MAX_AI_CONVERSATIONS } from '../shared/constants'
+import { createJsonStore } from './persistence'
 
 interface AiSettingsFile {
   encryptedApiKey?: string
@@ -11,50 +12,24 @@ interface AiSettingsFile {
 }
 
 let settings: AiSettingsFile = {
-  model: 'claude-sonnet-4-6',
+  model: DEFAULT_AI_MODEL,
   conversations: []
 }
-let filePath: string | null = null
 let currentAbort: AbortController | null = null
 
-function getFilePath(): string {
-  if (!filePath) {
-    filePath = join(app.getPath('userData'), 'ai-settings.json')
-  }
-  return filePath
-}
-
-function loadSettings(): void {
-  try {
-    const path = getFilePath()
-    if (existsSync(path)) {
-      const data = readFileSync(path, 'utf-8')
-      const parsed = JSON.parse(data)
-      settings = {
-        encryptedApiKey: parsed.encryptedApiKey,
-        model: parsed.model || 'claude-sonnet-4-6',
-        conversations: Array.isArray(parsed.conversations) ? parsed.conversations : []
-      }
-    }
-  } catch {
-    // Keep defaults
-  }
-}
-
-function persistSettings(): void {
-  try {
-    writeFileSync(getFilePath(), JSON.stringify(settings, null, 2), 'utf-8')
-  } catch (e) {
-    console.error('Failed to save AI settings:', e)
-  }
-}
+const store = createJsonStore<AiSettingsFile>('ai-settings.json', { model: DEFAULT_AI_MODEL, conversations: [] })
 
 export function initAi(): void {
-  loadSettings()
+  const parsed = store.load()
+  settings = {
+    encryptedApiKey: parsed.encryptedApiKey,
+    model: parsed.model || DEFAULT_AI_MODEL,
+    conversations: Array.isArray(parsed.conversations) ? parsed.conversations : []
+  }
 }
 
 export function saveAiSettings(): void {
-  persistSettings()
+  store.save(settings)
 }
 
 export function hasApiKey(): boolean {
@@ -68,7 +43,7 @@ export function setApiKey(key: string): void {
   } else {
     settings.encryptedApiKey = Buffer.from(key).toString('base64')
   }
-  persistSettings()
+  store.save(settings)
 }
 
 function getApiKey(): string | null {
@@ -91,7 +66,7 @@ export function getModel(): string {
 
 export function setModel(model: string): void {
   settings.model = model
-  persistSettings()
+  store.save(settings)
 }
 
 export function getConversations(): AiConversation[] {
@@ -105,17 +80,17 @@ export function saveConversation(conversation: AiConversation): void {
   } else {
     settings.conversations.unshift(conversation)
   }
-  if (settings.conversations.length > 50) {
-    settings.conversations = settings.conversations.slice(0, 50)
+  if (settings.conversations.length > MAX_AI_CONVERSATIONS) {
+    settings.conversations = settings.conversations.slice(0, MAX_AI_CONVERSATIONS)
   }
-  persistSettings()
+  store.save(settings)
 }
 
 export function deleteConversation(id: string): boolean {
   const idx = settings.conversations.findIndex((c) => c.id === id)
   if (idx === -1) return false
   settings.conversations.splice(idx, 1)
-  persistSettings()
+  store.save(settings)
   return true
 }
 
@@ -180,7 +155,7 @@ function streamViaApi(
   try {
     const stream = client.messages.stream({
       model: params.model || settings.model,
-      max_tokens: 4096,
+      max_tokens: AI_MAX_TOKENS,
       system: systemPrompt,
       messages: params.messages.map((m) => ({
         role: m.role,
@@ -200,7 +175,7 @@ function streamViaApi(
       if (err instanceof Error && err.name === 'AbortError') {
         finish()
       } else {
-        fail(err instanceof Error ? err.message : String(err))
+        fail(formatError(err))
       }
     })
 
@@ -208,7 +183,7 @@ function streamViaApi(
       finish()
     })
   } catch (err: unknown) {
-    fail(err instanceof Error ? err.message : String(err))
+    fail(formatError(err))
   }
 }
 
@@ -220,7 +195,6 @@ export function streamMessage(
     schemaContext: string
     model: string
   },
-  _messageId: string,
   onChunk: (content: string) => void,
   onDone: () => void,
   onError: (error: string) => void

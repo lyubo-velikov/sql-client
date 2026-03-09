@@ -1,46 +1,19 @@
-import { app } from 'electron'
-import { join } from 'path'
-import { readFileSync, writeFileSync, existsSync } from 'fs'
 import type { HistoryEntry } from '../shared/types'
-
-const MAX_ENTRIES = 500
+import { generateId } from '../shared/utils'
+import { MAX_HISTORY_ENTRIES } from '../shared/constants'
+import { createJsonStore } from './persistence'
 
 let entries: HistoryEntry[] = []
-let filePath: string | null = null
 
-function getFilePath(): string {
-  if (!filePath) {
-    filePath = join(app.getPath('userData'), 'query-history.json')
-  }
-  return filePath
-}
-
-function generateId(): string {
-  return `hist-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
-}
+const store = createJsonStore<HistoryEntry[]>('query-history.json', [], true)
 
 export function initHistory(): void {
-  try {
-    const path = getFilePath()
-    if (existsSync(path)) {
-      const data = readFileSync(path, 'utf-8')
-      const parsed = JSON.parse(data)
-      if (Array.isArray(parsed)) {
-        entries = parsed.slice(-MAX_ENTRIES)
-      }
-    }
-  } catch {
-    // Start fresh if file is corrupt
-    entries = []
-  }
+  const loaded = store.load()
+  entries = (Array.isArray(loaded) ? loaded : []).slice(-MAX_HISTORY_ENTRIES)
 }
 
 export function saveHistory(): void {
-  try {
-    writeFileSync(getFilePath(), JSON.stringify(entries), 'utf-8')
-  } catch (e) {
-    console.error('Failed to save history:', e)
-  }
+  store.save(entries)
 }
 
 export function addEntry(
@@ -48,13 +21,13 @@ export function addEntry(
 ): HistoryEntry {
   const full: HistoryEntry = {
     ...entry,
-    id: generateId(),
+    id: generateId('hist'),
     timestamp: Date.now()
   }
   entries.push(full)
   // Trim to cap
-  if (entries.length > MAX_ENTRIES) {
-    entries = entries.slice(-MAX_ENTRIES)
+  if (entries.length > MAX_HISTORY_ENTRIES) {
+    entries = entries.slice(-MAX_HISTORY_ENTRIES)
   }
   return full
 }

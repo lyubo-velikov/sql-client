@@ -145,6 +145,7 @@
       notificationStore.add('error', `Save failed: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       saving = false
+      historyStore.refresh()
     }
   }
 
@@ -312,6 +313,7 @@
       resultCount = 0
     } finally {
       executing = false
+      historyStore.refresh()
     }
   }
 

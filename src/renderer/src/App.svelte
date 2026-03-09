@@ -15,6 +15,7 @@
   import AiAssistant from './components/ai/AiAssistant.svelte'
   import { queryFilesStore } from './stores/queryFiles.svelte'
   import { assistantStore } from './stores/assistant.svelte'
+  import { DEFAULT_CONNECTION_COLOR } from '../../shared/constants'
 
   let connectionManagerOpen = $state(false)
   let sidebarCollapsed = $state(false)
@@ -111,7 +112,7 @@
       if (legacy) {
         const saved = await savedConnectionsStore.create({
           name: legacy.database,
-          color: '#10a37f',
+          color: DEFAULT_CONNECTION_COLOR,
           ...legacy
         })
         await connectionStore.connectSaved(saved)

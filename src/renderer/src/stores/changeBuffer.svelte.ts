@@ -1,3 +1,5 @@
+import { generateId } from '../../../shared/utils'
+
 export interface CellEdit {
   rowIndex: number
   column: string
@@ -45,7 +47,7 @@ export function createChangeBuffer() {
 
   function addInsertRow(columns: string[]): RowInsert {
     const row: RowInsert = {
-      tempId: `new-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      tempId: generateId('new'),
       values: {},
       touchedColumns: new Set()
     }
