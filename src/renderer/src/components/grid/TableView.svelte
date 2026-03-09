@@ -232,8 +232,8 @@
     try {
       const statements = [
         ...buildDeleteStatements(schema, table, changeBuffer.deletes, rows, primaryKeyColumns),
-        ...buildUpdateStatements(schema, table, changeBuffer.edits, rows, primaryKeyColumns),
-        ...buildInsertStatements(schema, table, changeBuffer.inserts)
+        ...buildUpdateStatements(schema, table, changeBuffer.edits, rows, primaryKeyColumns, columnTypes),
+        ...buildInsertStatements(schema, table, changeBuffer.inserts, columnTypes)
       ]
 
       // Deep-clone to strip Svelte 5 reactive proxies before sending through IPC

@@ -26,12 +26,25 @@ function serializeRow(row: Record<string, unknown>): Record<string, unknown> {
   return out
 }
 
+// Column types that need explicit casting in parameterized queries
+const TYPE_CASTS: Record<string, string> = {
+  jsonb: '::jsonb',
+  json: '::json'
+}
+
+function castForType(paramRef: string, dataType: string | undefined): string {
+  if (!dataType) return paramRef
+  const cast = TYPE_CASTS[dataType.toLowerCase()]
+  return cast ? `${paramRef}${cast}` : paramRef
+}
+
 export function buildUpdateStatements(
   schema: string,
   table: string,
   edits: Map<string, CellEdit>,
   rows: Record<string, unknown>[],
-  primaryKeyColumns: string[]
+  primaryKeyColumns: string[],
+  columnTypes?: Map<string, string>
 ): StatementWithMeta[] {
   // Group edits by row
   const rowEdits = new Map<number, CellEdit[]>()
@@ -55,7 +68,8 @@ export function buildUpdateStatements(
     // SET clause
     const setClauses = cellEdits.map((edit) => {
       params.push(edit.newValue)
-      return `${quoteIdent(edit.column)} = $${paramIdx++}`
+      const paramRef = `$${paramIdx++}`
+      return `${quoteIdent(edit.column)} = ${castForType(paramRef, columnTypes?.get(edit.column))}`
     })
 
     // WHERE clause using primary keys
@@ -91,13 +105,14 @@ export function buildUpdateStatements(
 export function buildInsertStatements(
   schema: string,
   table: string,
-  inserts: RowInsert[]
+  inserts: RowInsert[],
+  columnTypes?: Map<string, string>
 ): StatementWithMeta[] {
   return inserts.map((insert) => {
     // Only include columns the user explicitly edited — omit untouched columns so DB defaults apply
     const cols = Object.keys(insert.values).filter((c) => insert.touchedColumns.has(c))
     const params = cols.map((c) => insert.values[c])
-    const placeholders = cols.map((_, i) => `$${i + 1}`)
+    const placeholders = cols.map((col, i) => castForType(`$${i + 1}`, columnTypes?.get(col)))
 
     const sql = `INSERT INTO ${quoteIdent(schema)}.${quoteIdent(table)} (${cols.map(quoteIdent).join(', ')}) VALUES (${placeholders.join(', ')})`
     return {

@@ -76,6 +76,7 @@
   let editableSchema = $state<string | null>(null)
   let editableTable = $state<string | null>(null)
   let primaryKeyColumns = $state<string[]>([])
+  let columnTypes = $state<Map<string, string>>(new Map())
   let editable = $derived(editableTable !== null && primaryKeyColumns.length > 0)
   const changeBuffer = createChangeBuffer()
   let saving = $state(false)
@@ -123,7 +124,7 @@
     try {
       const statements = [
         ...buildDeleteStatements(editableSchema, editableTable, changeBuffer.deletes, resultRows, primaryKeyColumns),
-        ...buildUpdateStatements(editableSchema, editableTable, changeBuffer.edits, resultRows, primaryKeyColumns)
+        ...buildUpdateStatements(editableSchema, editableTable, changeBuffer.edits, resultRows, primaryKeyColumns, columnTypes)
       ]
 
       const result = await window.api.executeTransaction(
@@ -188,14 +189,19 @@
     return { schema: 'public', table: part1 }
   }
 
-  async function fetchPrimaryKeys(schema: string, table: string): Promise<string[]> {
+  async function fetchTableMeta(schema: string, table: string): Promise<{ pks: string[]; types: Map<string, string> }> {
     try {
       const result = await window.api.getTableSchema(schema, table)
       if (result.success && result.data) {
-        return result.data.filter((col: any) => col.is_primary_key).map((col: any) => col.column_name)
+        const pks = result.data.filter((col: any) => col.is_primary_key).map((col: any) => col.column_name)
+        const types = new Map<string, string>()
+        for (const col of result.data) {
+          types.set(col.column_name, col.data_type)
+        }
+        return { pks, types }
       }
     } catch { /* ignore */ }
-    return []
+    return { pks: [], types: new Map() }
   }
 
   // For client-side pagination of query results
@@ -264,6 +270,7 @@
     editableSchema = null
     editableTable = null
     primaryKeyColumns = []
+    columnTypes = new Map()
     lastExecutedQuery = queryText
 
     try {
@@ -279,14 +286,15 @@
         // Try to detect source table for inline editing
         const source = detectSourceTable(queryText)
         if (source) {
-          const pks = await fetchPrimaryKeys(source.schema, source.table)
-          if (pks.length > 0) {
+          const meta = await fetchTableMeta(source.schema, source.table)
+          if (meta.pks.length > 0) {
             // Verify all PK columns exist in results
-            const allPksPresent = pks.every((pk) => resultColumns.includes(pk))
+            const allPksPresent = meta.pks.every((pk) => resultColumns.includes(pk))
             if (allPksPresent) {
               editableSchema = source.schema
               editableTable = source.table
-              primaryKeyColumns = pks
+              primaryKeyColumns = meta.pks
+              columnTypes = meta.types
             }
           }
         }

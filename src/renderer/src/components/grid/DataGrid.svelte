@@ -60,6 +60,11 @@
   let editingCell = $state<{ row: number; col: string; isInsert?: boolean; tempId?: string } | null>(null)
   let editValue = $state('')
 
+  // JSON modal editor state
+  let jsonModal = $state<{ row: number; col: string; isInsert?: boolean; tempId?: string } | null>(null)
+  let jsonEditValue = $state('')
+  let jsonError = $state<string | null>(null)
+
   let totalPages = $derived(Math.max(1, Math.ceil(totalCount / pageSize)))
   let startRow = $derived((page - 1) * pageSize + 1)
   let endRow = $derived(Math.min(page * pageSize, totalCount))
@@ -151,7 +156,13 @@
     if (!isInsert && primaryKeyColumns.includes(col)) return
 
     editingCell = { row: rowIndex, col, isInsert, tempId }
-    editValue = value === null || value === undefined ? '' : String(value)
+    if (value === null || value === undefined) {
+      editValue = ''
+    } else if (typeof value === 'object') {
+      try { editValue = JSON.stringify(value, null, 2) } catch { editValue = String(value) }
+    } else {
+      editValue = String(value)
+    }
   }
 
   function commitEdit() {
@@ -175,6 +186,93 @@
     editingCell = null
   }
 
+  function isJsonValue(row: number, col: string, isInsert?: boolean, tempId?: string): boolean {
+    let value: unknown
+    if (isInsert && tempId) {
+      const insertRow = insertedRows.find((r) => r.tempId === tempId)
+      value = insertRow?.values[col]
+    } else {
+      value = rows[row]?.[col]
+    }
+    return typeof value === 'object' && value !== null && !(value instanceof Date)
+  }
+
+  function openJsonModal(row: number, col: string, value: unknown, isInsert = false, tempId?: string) {
+    jsonModal = { row, col, isInsert, tempId }
+    jsonError = null
+    if (value === null || value === undefined) {
+      jsonEditValue = ''
+    } else if (typeof value === 'object') {
+      try { jsonEditValue = JSON.stringify(value, null, 2) } catch { jsonEditValue = String(value) }
+    } else {
+      jsonEditValue = String(value)
+    }
+  }
+
+  function formatJson() {
+    try {
+      const parsed = JSON.parse(jsonEditValue)
+      jsonEditValue = JSON.stringify(parsed, null, 2)
+      jsonError = null
+    } catch (e) {
+      jsonError = e instanceof Error ? e.message : 'Invalid JSON'
+    }
+  }
+
+  function compactJson() {
+    try {
+      const parsed = JSON.parse(jsonEditValue)
+      jsonEditValue = JSON.stringify(parsed)
+      jsonError = null
+    } catch (e) {
+      jsonError = e instanceof Error ? e.message : 'Invalid JSON'
+    }
+  }
+
+  function commitJsonModal() {
+    if (!jsonModal) return
+    const { row, col, isInsert, tempId } = jsonModal
+    const newValue = jsonEditValue === '' ? null : jsonEditValue
+
+    // Validate JSON before committing
+    if (newValue !== null) {
+      try {
+        JSON.parse(newValue)
+        jsonError = null
+      } catch (e) {
+        jsonError = e instanceof Error ? e.message : 'Invalid JSON'
+        return
+      }
+    }
+
+    if (isInsert && tempId && changeBuffer) {
+      changeBuffer.setInsertCellValue(tempId, col, newValue)
+    } else if (onCellEdit) {
+      const originalValue = rows[row]?.[col] ?? null
+      onCellEdit(row, col, originalValue, newValue)
+    }
+
+    jsonModal = null
+    jsonEditValue = ''
+    jsonError = null
+  }
+
+  function cancelJsonModal() {
+    jsonModal = null
+    jsonEditValue = ''
+    jsonError = null
+  }
+
+  function handleJsonModalKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      cancelJsonModal()
+    } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault()
+      commitJsonModal()
+    }
+  }
+
   function handleEditKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter') {
       e.preventDefault()
@@ -185,9 +283,6 @@
     } else if (e.key === 'Tab') {
       e.preventDefault()
       commitEdit()
-      // Move to next column
-      if (editingCell) return // already cleared
-      // Find next editable column... handled by commitEdit clearing state
     }
   }
 
@@ -195,7 +290,13 @@
     if (editable) {
       // Commit any current edit first
       if (editingCell) commitEdit()
-      startEditing(rowIndex, col, value, isInsert, tempId)
+
+      // Route JSON values to the modal editor
+      if (isJsonValue(rowIndex, col, isInsert, tempId)) {
+        openJsonModal(rowIndex, col, value, isInsert, tempId)
+      } else {
+        startEditing(rowIndex, col, value, isInsert, tempId)
+      }
     }
   }
 
@@ -463,6 +564,48 @@
       </div>
     </div>
   {/if}
+
+  <!-- JSON Editor Modal -->
+  {#if jsonModal}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="json-modal-backdrop" onclick={cancelJsonModal} onkeydown={handleJsonModalKeydown}>
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="json-modal" onclick={(e) => e.stopPropagation()} onkeydown={handleJsonModalKeydown}>
+        <div class="json-modal-header">
+          <span class="json-modal-title">
+            Edit JSON &mdash; <code>{jsonModal.col}</code>
+          </span>
+          <button class="json-modal-close" onclick={cancelJsonModal} title="Close (Esc)">&times;</button>
+        </div>
+
+        <!-- svelte-ignore a11y_autofocus -->
+        <textarea
+          class="json-modal-textarea"
+          bind:value={jsonEditValue}
+          onkeydown={handleJsonModalKeydown}
+          autofocus
+          spellcheck="false"
+          placeholder="Enter JSON value..."
+        ></textarea>
+
+        {#if jsonError}
+          <div class="json-modal-error">{jsonError}</div>
+        {/if}
+
+        <div class="json-modal-footer">
+          <div class="json-modal-actions-left">
+            <button class="json-modal-btn json-modal-btn-secondary" onclick={formatJson}>Prettify</button>
+            <button class="json-modal-btn json-modal-btn-secondary" onclick={compactJson}>Compact</button>
+          </div>
+          <div class="json-modal-actions-right">
+            <span class="json-modal-hint">{navigator.platform.includes('Mac') ? 'Cmd' : 'Ctrl'}+Enter to save</span>
+            <button class="json-modal-btn json-modal-btn-secondary" onclick={cancelJsonModal}>Cancel</button>
+            <button class="json-modal-btn json-modal-btn-primary" onclick={commitJsonModal}>Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -512,6 +655,145 @@
     color: var(--color-text-primary);
     outline: none;
     box-sizing: border-box;
+  }
+
+  /* JSON Editor Modal */
+  .json-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(2px);
+  }
+
+  .json-modal {
+    background: var(--color-surface-primary);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: 8px;
+    width: 560px;
+    max-width: 90vw;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+  }
+
+  .json-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--color-border-primary);
+  }
+
+  .json-modal-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--color-text-primary);
+  }
+
+  .json-modal-title code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--color-accent);
+    font-weight: 500;
+  }
+
+  .json-modal-close {
+    background: none;
+    border: none;
+    color: var(--color-text-muted);
+    font-size: 20px;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+    border-radius: 4px;
+    transition: all 0.1s;
+  }
+
+  .json-modal-close:hover {
+    color: var(--color-text-primary);
+    background: var(--color-surface-hover);
+  }
+
+  .json-modal-textarea {
+    flex: 1;
+    min-height: 280px;
+    max-height: 60vh;
+    margin: 0;
+    padding: 12px 16px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--color-text-primary);
+    background: var(--color-surface-tertiary);
+    border: none;
+    outline: none;
+    resize: vertical;
+    white-space: pre;
+    tab-size: 2;
+  }
+
+  .json-modal-error {
+    padding: 6px 16px;
+    font-size: 11px;
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.08);
+    border-top: 1px solid rgba(239, 68, 68, 0.2);
+  }
+
+  .json-modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    border-top: 1px solid var(--color-border-primary);
+    gap: 8px;
+  }
+
+  .json-modal-actions-left,
+  .json-modal-actions-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .json-modal-hint {
+    font-size: 11px;
+    color: var(--color-text-muted);
+  }
+
+  .json-modal-btn {
+    padding: 5px 14px;
+    font-size: 12px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.1s;
+    border: 1px solid transparent;
+  }
+
+  .json-modal-btn-secondary {
+    background: var(--color-surface-tertiary);
+    color: var(--color-text-secondary);
+    border-color: var(--color-border-primary);
+  }
+
+  .json-modal-btn-secondary:hover {
+    background: var(--color-surface-hover);
+    color: var(--color-text-primary);
+  }
+
+  .json-modal-btn-primary {
+    background: var(--color-accent);
+    color: #fff;
+  }
+
+  .json-modal-btn-primary:hover {
+    filter: brightness(1.1);
   }
 
   .datagrid-page-btn {
