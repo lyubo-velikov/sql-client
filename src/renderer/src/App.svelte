@@ -164,7 +164,7 @@
               onAskAi={(params) => {
                 showAiAssistant = true
                 if (params.type === 'fix-error') {
-                  assistantStore.sendMessage(`Fix this SQL query error:\n\n\`\`\`sql\n${params.query}\n\`\`\`\n\nError: ${params.error}`)
+                  assistantStore.sendMessage(`I ran this SQL query and got an error. Please explain what went wrong and provide the corrected query I can run.\n\n**Query:**\n\`\`\`sql\n${params.query}\n\`\`\`\n\n**Error:**\n\`\`\`\n${params.error}\n\`\`\``)
                 } else if (params.type === 'explain') {
                   assistantStore.sendMessage(`Explain this SQL query:\n\n\`\`\`sql\n${params.query}\n\`\`\``)
                 }

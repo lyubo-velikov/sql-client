@@ -21,7 +21,8 @@
     "@uiw/codemirror-theme-material": "^4.25.8",
     "codemirror": "^6.0.2",
     "marked": "^17.0.4",
-    "postgres": "^3.4.5"
+    "postgres": "^3.4.5",
+    "sql-formatter": "^15.7.2"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.3",

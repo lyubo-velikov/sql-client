@@ -13,6 +13,7 @@
   import { createChangeBuffer } from '../../stores/changeBuffer.svelte'
   import { notificationStore } from '../../stores/notifications.svelte'
   import { buildUpdateStatements, buildDeleteStatements } from '../../utils/sqlBuilder'
+  import { format as formatSql } from 'sql-formatter'
 
   let { initialQuery = '', filePath, onQueryChange, onToggleHistory, onAskAi }: {
     initialQuery?: string
@@ -350,10 +351,28 @@
     isDragging = false
   }
 
+  function prettifyQuery() {
+    if (!editorView) return
+    const content = editorView.state.doc.toString()
+    if (!content.trim()) return
+    try {
+      const formatted = formatSql(content, { language: 'postgresql', tabWidth: 2, keywordCase: 'upper' })
+      editorView.dispatch({
+        changes: { from: 0, to: editorView.state.doc.length, insert: formatted }
+      })
+    } catch {
+      notificationStore.add('error', 'Could not format SQL')
+    }
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     if ((e.metaKey || e.ctrlKey) && e.key === 's' && changeBuffer.hasChanges) {
       e.preventDefault()
       commitChanges()
+    }
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'f') {
+      e.preventDefault()
+      prettifyQuery()
     }
   }
 
@@ -535,6 +554,17 @@
       {/if}
 
       <div class="flex-1"></div>
+
+      <button
+        class="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
+        onclick={prettifyQuery}
+        title="Format SQL ({navigator.platform?.includes('Mac') ? 'Cmd' : 'Ctrl'}+Shift+F)"
+      >
+        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" />
+        </svg>
+        Format
+      </button>
 
       {#if onAskAi}
         <button
