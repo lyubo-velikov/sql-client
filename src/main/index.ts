@@ -533,15 +533,6 @@ function registerIpcHandlers(): void {
     return { success: true }
   })
 
-  ipcMain.handle('ai:get-provider', async () => {
-    return { provider: ai.getProvider() }
-  })
-
-  ipcMain.handle('ai:set-provider', async (_event, params: { provider: 'api' | 'claude-cli' }) => {
-    ai.setProvider(params.provider)
-    return { success: true }
-  })
-
   ipcMain.handle('ai:send-message', (event, params: {
     messages: Array<{ role: 'user' | 'assistant'; content: string }>
     schemaContext: string

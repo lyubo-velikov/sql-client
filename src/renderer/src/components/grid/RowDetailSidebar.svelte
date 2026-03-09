@@ -83,14 +83,33 @@
   function startFieldEdit(col: string, value: unknown) {
     if (!isFieldEditable(col)) return
     editingField = col
-    editValue = value === null || value === undefined ? '' : String(value)
+    if (value === null || value === undefined) {
+      editValue = ''
+    } else if (typeof value === 'object') {
+      try { editValue = JSON.stringify(value, null, 2) } catch { editValue = String(value) }
+    } else {
+      editValue = String(value)
+    }
   }
 
   function commitFieldEdit() {
     if (!editingField || !row) return
     const col = editingField
-    const newValue = editValue === '' ? null : editValue
     const originalValue = row[col] ?? null
+
+    let newValue: unknown
+    if (editValue === '') {
+      newValue = null
+    } else if (typeof originalValue === 'object' && originalValue !== null && !(originalValue instanceof Date)) {
+      // Original was JSON/JSONB — parse edited value back to an object
+      try {
+        newValue = JSON.parse(editValue)
+      } catch {
+        newValue = editValue // fall back to string if not valid JSON
+      }
+    } else {
+      newValue = editValue
+    }
 
     if (onCellEdit) {
       onCellEdit(rowIndex, col, originalValue, newValue)

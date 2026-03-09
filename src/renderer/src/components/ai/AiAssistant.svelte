@@ -173,32 +173,30 @@
     <!-- Settings panel -->
     {#if showSettings}
       <div class="px-3 py-3 bg-surface-secondary/50 border-b border-border-primary space-y-3 flex-shrink-0">
-        <!-- Provider toggle -->
+        <!-- API Key -->
         <div>
-          <label class="block text-[10px] text-text-muted uppercase tracking-wider mb-1.5">Provider</label>
-          <div class="flex rounded-lg overflow-hidden border border-border-primary">
+          <label class="block text-[10px] text-text-muted uppercase tracking-wider mb-1">
+            Anthropic API Key
+            {#if assistantStore.hasApiKey}
+              <span class="text-accent ml-1">configured</span>
+            {/if}
+          </label>
+          <div class="flex gap-1.5">
+            <input
+              type="password"
+              class="flex-1 px-2 py-1.5 bg-surface-tertiary border border-border-primary rounded text-xs text-text-primary outline-none focus:border-accent/50 placeholder:text-text-muted"
+              placeholder={assistantStore.hasApiKey ? 'Update API key...' : 'sk-ant-...'}
+              bind:value={apiKeyInput}
+              onkeydown={(e) => { if (e.key === 'Enter') handleSetApiKey() }}
+            />
             <button
-              class="flex-1 px-3 py-1.5 text-xs font-medium transition-colors
-                {assistantStore.provider === 'claude-cli'
-                  ? 'bg-accent text-white'
-                  : 'bg-surface-tertiary text-text-secondary hover:text-text-primary'}"
-              onclick={() => assistantStore.setProvider('claude-cli')}
+              class="px-3 py-1.5 bg-accent text-white rounded text-xs font-medium hover:bg-accent-hover transition-colors disabled:opacity-50"
+              onclick={handleSetApiKey}
+              disabled={!apiKeyInput.trim()}
             >
-              Claude Code
-            </button>
-            <button
-              class="flex-1 px-3 py-1.5 text-xs font-medium transition-colors border-l border-border-primary
-                {assistantStore.provider === 'api'
-                  ? 'bg-accent text-white'
-                  : 'bg-surface-tertiary text-text-secondary hover:text-text-primary'}"
-              onclick={() => assistantStore.setProvider('api')}
-            >
-              API Key
+              Save
             </button>
           </div>
-          {#if assistantStore.provider === 'claude-cli'}
-            <p class="text-[10px] text-text-muted mt-1.5">Uses your Claude Code login (Max subscription). Requires <code class="text-accent">claude</code> CLI in PATH.</p>
-          {/if}
         </div>
 
         <!-- Model selector -->
@@ -214,34 +212,6 @@
             {/each}
           </select>
         </div>
-
-        <!-- API Key (only for API provider) -->
-        {#if assistantStore.provider === 'api'}
-          <div>
-            <label class="block text-[10px] text-text-muted uppercase tracking-wider mb-1">
-              Anthropic API Key
-              {#if assistantStore.hasApiKey}
-                <span class="text-accent ml-1">configured</span>
-              {/if}
-            </label>
-            <div class="flex gap-1.5">
-              <input
-                type="password"
-                class="flex-1 px-2 py-1.5 bg-surface-tertiary border border-border-primary rounded text-xs text-text-primary outline-none focus:border-accent/50 placeholder:text-text-muted"
-                placeholder={assistantStore.hasApiKey ? 'Update API key...' : 'sk-ant-...'}
-                bind:value={apiKeyInput}
-                onkeydown={(e) => { if (e.key === 'Enter') handleSetApiKey() }}
-              />
-              <button
-                class="px-3 py-1.5 bg-accent text-white rounded text-xs font-medium hover:bg-accent-hover transition-colors disabled:opacity-50"
-                onclick={handleSetApiKey}
-                disabled={!apiKeyInput.trim()}
-              >
-                Save
-              </button>
-            </div>
-          </div>
-        {/if}
       </div>
     {/if}
 
@@ -283,8 +253,8 @@
           <svg class="w-10 h-10 text-accent/30 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
           </svg>
-          <p class="text-sm text-text-secondary mb-1">Set up AI provider</p>
-          <p class="text-xs text-text-muted mb-3">Use Claude Code (Max subscription) or an API key</p>
+          <p class="text-sm text-text-secondary mb-1">Set up AI Assistant</p>
+          <p class="text-xs text-text-muted mb-3">Add your Anthropic API key to get started</p>
           <button
             class="px-4 py-2 bg-accent text-white rounded-lg text-xs font-medium hover:bg-accent-hover transition-colors"
             onclick={() => { showSettings = true }}

@@ -1,28 +1,21 @@
 import { app, safeStorage } from 'electron'
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
-import { spawn, type ChildProcess } from 'child_process'
 import Anthropic from '@anthropic-ai/sdk'
 import type { AiConversation } from '../shared/types'
-import { log } from './logger'
-
-type Provider = 'api' | 'claude-cli'
 
 interface AiSettingsFile {
-  provider: Provider
   encryptedApiKey?: string
   model: string
   conversations: AiConversation[]
 }
 
 let settings: AiSettingsFile = {
-  provider: 'claude-cli',
   model: 'claude-sonnet-4-6',
   conversations: []
 }
 let filePath: string | null = null
 let currentAbort: AbortController | null = null
-let currentCliProcess: ChildProcess | null = null
 
 function getFilePath(): string {
   if (!filePath) {
@@ -38,7 +31,6 @@ function loadSettings(): void {
       const data = readFileSync(path, 'utf-8')
       const parsed = JSON.parse(data)
       settings = {
-        provider: parsed.provider || 'claude-cli',
         encryptedApiKey: parsed.encryptedApiKey,
         model: parsed.model || 'claude-sonnet-4-6',
         conversations: Array.isArray(parsed.conversations) ? parsed.conversations : []
@@ -62,15 +54,6 @@ export function initAi(): void {
 }
 
 export function saveAiSettings(): void {
-  persistSettings()
-}
-
-export function getProvider(): Provider {
-  return settings.provider
-}
-
-export function setProvider(provider: Provider): void {
-  settings.provider = provider
   persistSettings()
 }
 
@@ -140,10 +123,6 @@ export function stopStream(): void {
   if (currentAbort) {
     currentAbort.abort()
     currentAbort = null
-  }
-  if (currentCliProcess) {
-    currentCliProcess.kill('SIGTERM')
-    currentCliProcess = null
   }
 }
 
@@ -233,169 +212,7 @@ function streamViaApi(
   }
 }
 
-// --- Claude CLI provider ---
-
-function streamViaCli(
-  params: {
-    messages: Array<{ role: 'user' | 'assistant'; content: string }>
-    schemaContext: string
-    model: string
-  },
-  onChunk: (content: string) => void,
-  onDone: () => void,
-  onError: (error: string) => void
-): void {
-  const systemPrompt = SYSTEM_PROMPT.replace('{SCHEMA_CONTEXT}', params.schemaContext || 'No schema context available.')
-
-  // Build the full prompt: system context + conversation history
-  const parts: string[] = [systemPrompt, '']
-  for (const msg of params.messages) {
-    if (msg.role === 'user') {
-      parts.push(`User: ${msg.content}`)
-    } else {
-      parts.push(`Assistant: ${msg.content}`)
-    }
-  }
-  const fullPrompt = parts.join('\n\n')
-
-  const model = params.model || settings.model
-  const args = [
-    '-p', '-',
-    '--output-format', 'stream-json',
-    '--include-partial-messages',
-    '--model', model,
-    '--no-session-persistence',
-    '--permission-mode', 'plan',
-    '--max-turns', '1'
-  ]
-
-  // Remove CLAUDECODE env var so the CLI doesn't think it's nested
-  const env = { ...process.env }
-  delete env.CLAUDECODE
-
-  log('[AI CLI] spawning claude with model:', model)
-  log('[AI CLI] prompt length:', fullPrompt.length, 'chars')
-
-  try {
-    const proc = spawn('claude', args, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env
-    })
-
-    // Write prompt to stdin and close it
-    proc.stdin.write(fullPrompt)
-    proc.stdin.end()
-
-    currentCliProcess = proc
-
-    let buffer = ''
-    let sentChunks = false
-    // Track the last seen text length to compute deltas from partial messages
-    let lastTextLength = 0
-
-    proc.stdout.on('data', (data: Buffer) => {
-      const chunk = data.toString()
-      log('[AI CLI stdout]', chunk.slice(0, 500))
-      buffer += chunk
-
-      // Parse newline-delimited JSON
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || '' // Keep incomplete line in buffer
-
-      for (const line of lines) {
-        if (!line.trim()) continue
-        try {
-          const event = JSON.parse(line)
-          handleCliEvent(event)
-        } catch {
-          log('[AI CLI] non-JSON line:', line.slice(0, 200))
-        }
-      }
-    })
-
-    function handleCliEvent(event: any): void {
-      log('[AI CLI event]', event.type, JSON.stringify(event).slice(0, 300))
-
-      if (event.type === 'assistant' && event.message?.content) {
-        // Extract accumulated text from content blocks
-        const content = event.message.content
-        let fullText = ''
-        for (const block of content) {
-          if (block.type === 'text' && block.text) {
-            fullText += block.text
-          }
-        }
-        // Send only the new delta since last update
-        if (fullText.length > lastTextLength) {
-          const delta = fullText.slice(lastTextLength)
-          onChunk(delta)
-          lastTextLength = fullText.length
-          sentChunks = true
-        }
-      } else if (event.type === 'result' && event.result) {
-        // Final result — if we haven't sent any chunks, send the whole thing
-        if (!sentChunks) {
-          onChunk(event.result)
-          sentChunks = true
-        }
-      } else if (event.type === 'content_block_delta' && event.delta?.text) {
-        onChunk(event.delta.text)
-        sentChunks = true
-      }
-    }
-
-    let stderrBuf = ''
-    proc.stderr.on('data', (data: Buffer) => {
-      const chunk = data.toString()
-      log('[AI CLI stderr]', chunk.slice(0, 500))
-      stderrBuf += chunk
-    })
-
-    proc.on('close', (code) => {
-      log('[AI CLI] process closed with code:', code, 'sentChunks:', sentChunks, 'buffer:', buffer.slice(0, 300))
-      currentCliProcess = null
-
-      // Process any remaining buffer
-      if (buffer.trim()) {
-        try {
-          const event = JSON.parse(buffer)
-          handleCliEvent(event)
-        } catch {
-          // Plain text fallback
-          if (!sentChunks && buffer.trim()) {
-            onChunk(buffer.trim())
-          }
-        }
-      }
-
-      if (code !== 0 && code !== null) {
-        const errMsg = stderrBuf.trim() || `Claude CLI exited with code ${code}`
-        if (errMsg.includes('ENOENT')) {
-          onError('Claude CLI not found. Make sure Claude Code is installed and `claude` is in your PATH.')
-        } else if (errMsg.includes('not logged in') || errMsg.includes('auth')) {
-          onError('Not authenticated. Run `claude` in your terminal to log in first.')
-        } else {
-          onError(errMsg)
-        }
-      } else {
-        onDone()
-      }
-    })
-
-    proc.on('error', (err) => {
-      currentCliProcess = null
-      if (err.message.includes('ENOENT')) {
-        onError('Claude CLI not found. Install it with: npm install -g @anthropic-ai/claude-code')
-      } else {
-        onError(err.message)
-      }
-    })
-  } catch (err) {
-    onError(err instanceof Error ? err.message : String(err))
-  }
-}
-
-// --- Public streaming function (routes to provider) ---
+// --- Public streaming function ---
 
 export function streamMessage(
   params: {
@@ -408,9 +225,5 @@ export function streamMessage(
   onDone: () => void,
   onError: (error: string) => void
 ): void {
-  if (settings.provider === 'claude-cli') {
-    streamViaCli(params, onChunk, onDone, onError)
-  } else {
-    streamViaApi(params, onChunk, onDone, onError)
-  }
+  streamViaApi(params, onChunk, onDone, onError)
 }

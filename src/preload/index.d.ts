@@ -164,8 +164,6 @@ export interface DbApi {
   setAiApiKey(key: string): Promise<{ success: boolean }>
   getAiModel(): Promise<{ model: string }>
   setAiModel(model: string): Promise<{ success: boolean }>
-  getAiProvider(): Promise<{ provider: 'api' | 'claude-cli' }>
-  setAiProvider(provider: 'api' | 'claude-cli'): Promise<{ success: boolean }>
   sendAiMessage(params: {
     messages: Array<{ role: 'user' | 'assistant'; content: string }>
     schemaContext: string

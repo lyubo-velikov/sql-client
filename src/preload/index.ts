@@ -99,8 +99,6 @@ const api = {
   setAiApiKey: (key: string) => ipcRenderer.invoke('ai:set-api-key', { key }),
   getAiModel: () => ipcRenderer.invoke('ai:get-model'),
   setAiModel: (model: string) => ipcRenderer.invoke('ai:set-model', { model }),
-  getAiProvider: () => ipcRenderer.invoke('ai:get-provider'),
-  setAiProvider: (provider: 'api' | 'claude-cli') => ipcRenderer.invoke('ai:set-provider', { provider }),
   sendAiMessage: (params: {
     messages: Array<{ role: 'user' | 'assistant'; content: string }>
     schemaContext: string

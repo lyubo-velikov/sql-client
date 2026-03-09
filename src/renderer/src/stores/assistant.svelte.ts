@@ -10,7 +10,6 @@ let streamingContent = $state('')
 let streamingMessageId = $state<string | null>(null)
 let hasApiKey = $state(false)
 let model = $state('claude-sonnet-4-6')
-let provider = $state<'api' | 'claude-cli'>('claude-cli')
 let loaded = $state(false)
 let unsubscribeStream: (() => void) | null = null
 
@@ -94,16 +93,14 @@ async function load(): Promise<void> {
   if (loaded) return
 
   try {
-    const [keyResult, modelResult, providerResult, convos] = await Promise.all([
+    const [keyResult, modelResult, convos] = await Promise.all([
       window.api.hasAiApiKey(),
       window.api.getAiModel(),
-      window.api.getAiProvider(),
       window.api.listAiConversations()
     ])
 
     hasApiKey = keyResult.hasKey
     model = modelResult.model
-    provider = providerResult.provider
     conversations = Array.isArray(convos) ? convos : []
   } catch {
     // Keep defaults
@@ -260,13 +257,8 @@ async function setModelValue(m: string): Promise<void> {
   await window.api.setAiModel(m)
 }
 
-async function setProviderValue(p: 'api' | 'claude-cli'): Promise<void> {
-  provider = p
-  await window.api.setAiProvider(p)
-}
-
 function isReady(): boolean {
-  return provider === 'claude-cli' || hasApiKey
+  return hasApiKey
 }
 
 function persistConversation(): void {
@@ -322,7 +314,6 @@ export const assistantStore = {
   get streamingContent() { return streamingContent },
   get hasApiKey() { return hasApiKey },
   get model() { return model },
-  get provider() { return provider },
   get loaded() { return loaded },
   get isReady() { return isReady() },
   load,
@@ -332,7 +323,6 @@ export const assistantStore = {
   stopStream,
   setApiKey: setApiKeyValue,
   setModel: setModelValue,
-  setProvider: setProviderValue,
   deleteConversation: deleteConversationById,
   clearMessages,
   cleanup

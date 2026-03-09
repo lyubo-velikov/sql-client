@@ -1,5 +1,12 @@
 <script lang="ts">
+  import { untrack } from 'svelte'
   import type { createChangeBuffer, RowInsert } from '../../stores/changeBuffer.svelte'
+  import { EditorView, keymap } from '@codemirror/view'
+  import { EditorState, Prec } from '@codemirror/state'
+  import { json } from '@codemirror/lang-json'
+  import { materialDark, materialLight } from '@uiw/codemirror-theme-material'
+  import { basicSetup } from 'codemirror'
+  import { themeStore } from '../../stores/theme.svelte'
 
   let {
     rows = [],
@@ -64,6 +71,69 @@
   let jsonModal = $state<{ row: number; col: string; isInsert?: boolean; tempId?: string } | null>(null)
   let jsonEditValue = $state('')
   let jsonError = $state<string | null>(null)
+  let jsonEditorContainer: HTMLDivElement | undefined = $state()
+  let jsonEditorView: EditorView | undefined = $state()
+
+  function getJsonEditorTheme() {
+    return themeStore.theme === 'light' ? materialLight : materialDark
+  }
+
+  function createJsonEditor(container: HTMLDivElement, doc: string) {
+    jsonEditorView?.destroy()
+
+    const modalKeymap = Prec.highest(keymap.of([
+      {
+        key: 'Escape',
+        run: () => { cancelJsonModal(); return true }
+      },
+      {
+        key: 'Mod-Enter',
+        run: () => { commitJsonModal(); return true }
+      }
+    ]))
+
+    const contentSync = EditorView.updateListener.of((update) => {
+      if (update.docChanged) {
+        jsonEditValue = update.state.doc.toString()
+      }
+    })
+
+    const state = EditorState.create({
+      doc,
+      extensions: [
+        basicSetup,
+        json(),
+        getJsonEditorTheme(),
+        modalKeymap,
+        contentSync,
+        EditorView.theme({
+          '&': { height: '100%', maxHeight: '60vh' },
+          '&.cm-focused .cm-cursor': { borderLeftColor: 'var(--color-accent)' },
+          '.cm-scroller': { overflow: 'auto' }
+        }),
+        EditorView.lineWrapping
+      ]
+    })
+
+    jsonEditorView = new EditorView({ state, parent: container })
+    jsonEditorView.focus()
+  }
+
+  function destroyJsonEditor() {
+    jsonEditorView?.destroy()
+    jsonEditorView = undefined
+  }
+
+  // Create/destroy editor when modal opens/closes
+  $effect(() => {
+    const modal = jsonModal
+    const container = jsonEditorContainer
+    if (modal && container) {
+      // Read jsonEditValue without tracking to avoid re-creating editor on every keystroke
+      untrack(() => createJsonEditor(container, jsonEditValue))
+    }
+    return () => destroyJsonEditor()
+  })
 
   let totalPages = $derived(Math.max(1, Math.ceil(totalCount / pageSize)))
   let startRow = $derived((page - 1) * pageSize + 1)
@@ -209,10 +279,19 @@
     }
   }
 
+  function setJsonEditorContent(content: string) {
+    jsonEditValue = content
+    if (jsonEditorView) {
+      jsonEditorView.dispatch({
+        changes: { from: 0, to: jsonEditorView.state.doc.length, insert: content }
+      })
+    }
+  }
+
   function formatJson() {
     try {
       const parsed = JSON.parse(jsonEditValue)
-      jsonEditValue = JSON.stringify(parsed, null, 2)
+      setJsonEditorContent(JSON.stringify(parsed, null, 2))
       jsonError = null
     } catch (e) {
       jsonError = e instanceof Error ? e.message : 'Invalid JSON'
@@ -222,7 +301,7 @@
   function compactJson() {
     try {
       const parsed = JSON.parse(jsonEditValue)
-      jsonEditValue = JSON.stringify(parsed)
+      setJsonEditorContent(JSON.stringify(parsed))
       jsonError = null
     } catch (e) {
       jsonError = e instanceof Error ? e.message : 'Invalid JSON'
@@ -232,12 +311,12 @@
   function commitJsonModal() {
     if (!jsonModal) return
     const { row, col, isInsert, tempId } = jsonModal
-    const newValue = jsonEditValue === '' ? null : jsonEditValue
 
-    // Validate JSON before committing
-    if (newValue !== null) {
+    // Parse JSON string back to an object so it's stored with the correct type
+    let newValue: unknown = null
+    if (jsonEditValue !== '') {
       try {
-        JSON.parse(newValue)
+        newValue = JSON.parse(jsonEditValue)
         jsonError = null
       } catch (e) {
         jsonError = e instanceof Error ? e.message : 'Invalid JSON'
@@ -252,26 +331,20 @@
       onCellEdit(row, col, originalValue, newValue)
     }
 
+    destroyJsonEditor()
     jsonModal = null
     jsonEditValue = ''
     jsonError = null
   }
 
   function cancelJsonModal() {
+    destroyJsonEditor()
     jsonModal = null
     jsonEditValue = ''
     jsonError = null
   }
 
-  function handleJsonModalKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      cancelJsonModal()
-    } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault()
-      commitJsonModal()
-    }
-  }
+  // Keyboard shortcuts for JSON modal are handled by CodeMirror keybindings
 
   function handleEditKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter') {
@@ -568,9 +641,9 @@
   <!-- JSON Editor Modal -->
   {#if jsonModal}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="json-modal-backdrop" onclick={cancelJsonModal} onkeydown={handleJsonModalKeydown}>
+    <div class="json-modal-backdrop" onclick={cancelJsonModal}>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="json-modal" onclick={(e) => e.stopPropagation()} onkeydown={handleJsonModalKeydown}>
+      <div class="json-modal" onclick={(e) => e.stopPropagation()}>
         <div class="json-modal-header">
           <span class="json-modal-title">
             Edit JSON &mdash; <code>{jsonModal.col}</code>
@@ -578,15 +651,7 @@
           <button class="json-modal-close" onclick={cancelJsonModal} title="Close (Esc)">&times;</button>
         </div>
 
-        <!-- svelte-ignore a11y_autofocus -->
-        <textarea
-          class="json-modal-textarea"
-          bind:value={jsonEditValue}
-          onkeydown={handleJsonModalKeydown}
-          autofocus
-          spellcheck="false"
-          placeholder="Enter JSON value..."
-        ></textarea>
+        <div class="json-modal-editor" bind:this={jsonEditorContainer}></div>
 
         {#if jsonError}
           <div class="json-modal-error">{jsonError}</div>
@@ -719,22 +784,12 @@
     background: var(--color-surface-hover);
   }
 
-  .json-modal-textarea {
+  .json-modal-editor {
     flex: 1;
     min-height: 280px;
     max-height: 60vh;
-    margin: 0;
-    padding: 12px 16px;
-    font-family: var(--font-mono);
+    overflow: auto;
     font-size: 12px;
-    line-height: 1.5;
-    color: var(--color-text-primary);
-    background: var(--color-surface-tertiary);
-    border: none;
-    outline: none;
-    resize: vertical;
-    white-space: pre;
-    tab-size: 2;
   }
 
   .json-modal-error {

@@ -22,7 +22,10 @@ export function createChangeBuffer() {
   function setCellEdit(rowIndex: number, column: string, originalValue: unknown, newValue: unknown) {
     const key = `${rowIndex}:${column}`
     // If reverted to original, remove the edit
-    if (newValue === originalValue || (String(newValue) === String(originalValue))) {
+    // Use JSON.stringify for objects to compare deeply (String() returns [object Object] for all objects)
+    const serialize = (v: unknown): string =>
+      typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v)
+    if (newValue === originalValue || serialize(newValue) === serialize(originalValue)) {
       edits.delete(key)
       edits = new Map(edits)
     } else {
