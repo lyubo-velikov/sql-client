@@ -4,6 +4,10 @@ A modern, native PostgreSQL client built with Electron, Svelte, and CodeMirror.
 
 ![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)
 
+![SQL Client Preview](preview.png)
+
+> **Note:** Currently tested with PostgreSQL only, on macOS. Other databases and platforms may work but are not officially supported yet.
+
 ## Features
 
 - **Query Editor** — CodeMirror-powered SQL editor with PostgreSQL autocomplete, syntax highlighting, and formatting (Cmd+Shift+F)
