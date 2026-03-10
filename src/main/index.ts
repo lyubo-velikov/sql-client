@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, nativeImage, shell } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc'
@@ -16,6 +16,7 @@ function createWindow(): void {
     minWidth: 800,
     minHeight: 600,
     show: false,
+    icon: join(__dirname, '../../resources/icon.png'),
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 15, y: 15 },
     backgroundColor: '#0a0a0a',
@@ -39,7 +40,14 @@ function createWindow(): void {
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    try {
+      const url = new URL(details.url)
+      if (url.protocol === 'https:' || url.protocol === 'http:') {
+        shell.openExternal(details.url)
+      }
+    } catch {
+      // Invalid URL — do not open
+    }
     return { action: 'deny' }
   })
 
@@ -51,6 +59,11 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  if (process.platform === 'darwin') {
+    const icon = nativeImage.createFromPath(join(__dirname, '../../resources/icon.png'))
+    app.dock.setIcon(icon)
+  }
+
   initLogger()
   initHistory()
   initConnections()

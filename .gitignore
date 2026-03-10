@@ -1,9 +1,17 @@
 node_modules/
 out/
 dist/
+release/
 .DS_Store
+Thumbs.db
 *.log
+*.swp
+*.swo
 .env
 .env.local
 .claude/
+.vscode/
+.idea/
 logs/
+nanobanana-output/
+*.pem

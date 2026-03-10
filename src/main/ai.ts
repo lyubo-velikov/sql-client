@@ -37,24 +37,20 @@ export function hasApiKey(): boolean {
 }
 
 export function setApiKey(key: string): void {
-  if (safeStorage.isEncryptionAvailable()) {
-    const encrypted = safeStorage.encryptString(key)
-    settings.encryptedApiKey = encrypted.toString('base64')
-  } else {
-    settings.encryptedApiKey = Buffer.from(key).toString('base64')
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error('Secure storage is not available on this system. Cannot store API key safely.')
   }
+  const encrypted = safeStorage.encryptString(key)
+  settings.encryptedApiKey = encrypted.toString('base64')
   store.save(settings)
 }
 
 function getApiKey(): string | null {
   if (!settings.encryptedApiKey) return null
   try {
-    if (safeStorage.isEncryptionAvailable()) {
-      const buffer = Buffer.from(settings.encryptedApiKey, 'base64')
-      return safeStorage.decryptString(buffer)
-    } else {
-      return Buffer.from(settings.encryptedApiKey, 'base64').toString('utf-8')
-    }
+    if (!safeStorage.isEncryptionAvailable()) return null
+    const buffer = Buffer.from(settings.encryptedApiKey, 'base64')
+    return safeStorage.decryptString(buffer)
   } catch {
     return null
   }

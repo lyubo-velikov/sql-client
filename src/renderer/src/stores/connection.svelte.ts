@@ -32,8 +32,8 @@ const DEFAULT_CONNECTION: ConnectionInfo = {
   host: 'localhost',
   port: 5432,
   database: 'postgres',
-  username: 'root',
-  password: 'password'
+  username: '',
+  password: ''
 }
 
 let connected = $state(false)

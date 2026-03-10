@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Marked } from 'marked'
+  import DOMPurify from 'dompurify'
 
   let { message, onRunQuery, isStreaming = false }: {
     message: { role: 'user' | 'assistant'; content: string; timestamp: number }
@@ -101,7 +102,7 @@
   })
 
   function renderMarkdown(text: string): string {
-    return marked.parse(text) as string
+    return DOMPurify.sanitize(marked.parse(text) as string)
   }
 
   async function copyCode(code: string, idx: number) {

@@ -1,3 +1,4 @@
+import { safeStorage } from 'electron'
 import type { SavedConnection } from '../shared/types'
 import { generateId } from '../shared/utils'
 import { createJsonStore } from './persistence'
@@ -6,21 +7,55 @@ let connections: SavedConnection[] = []
 
 const store = createJsonStore<SavedConnection[]>('connections.json', [])
 
+function encryptPassword(password: string): string {
+  if (safeStorage.isEncryptionAvailable()) {
+    return 'enc:' + safeStorage.encryptString(password).toString('base64')
+  }
+  return password
+}
+
+function decryptPassword(stored: string): string {
+  if (stored.startsWith('enc:') && safeStorage.isEncryptionAvailable()) {
+    try {
+      const buffer = Buffer.from(stored.slice(4), 'base64')
+      return safeStorage.decryptString(buffer)
+    } catch {
+      return stored
+    }
+  }
+  return stored
+}
+
 export function initConnections(): void {
   const loaded = store.load()
   connections = Array.isArray(loaded) ? loaded : []
 }
 
 export function saveConnections(): void {
-  store.save(connections)
+  // Encrypt passwords before persisting
+  const toSave = connections.map((c) => ({
+    ...c,
+    password: c.password && !c.password.startsWith('enc:') ? encryptPassword(c.password) : c.password
+  }))
+  store.save(toSave)
+}
+
+/** Return connections with passwords decrypted for use */
+function decryptedConnections(): SavedConnection[] {
+  return connections.map((c) => ({
+    ...c,
+    password: decryptPassword(c.password)
+  }))
 }
 
 export function getAllConnections(): SavedConnection[] {
-  return connections
+  return decryptedConnections()
 }
 
 export function getConnectionById(id: string): SavedConnection | undefined {
-  return connections.find((c) => c.id === id)
+  const conn = connections.find((c) => c.id === id)
+  if (!conn) return undefined
+  return { ...conn, password: decryptPassword(conn.password) }
 }
 
 export function addConnection(

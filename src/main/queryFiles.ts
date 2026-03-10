@@ -1,9 +1,17 @@
 import { app, shell, BrowserWindow } from 'electron'
-import { join, basename, extname, dirname } from 'path'
+import { join, basename, extname, dirname, resolve } from 'path'
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync, renameSync, watch } from 'fs'
 import { homedir } from 'os'
 import type { QueryFile } from '../shared/types'
 import { log } from './logger'
+
+function assertInsideQueriesDir(filePath: string): void {
+  const resolved = resolve(filePath)
+  const resolvedDir = resolve(queriesDir)
+  if (!resolved.startsWith(resolvedDir + '/') && resolved !== resolvedDir) {
+    throw new Error('Path is outside the queries directory')
+  }
+}
 
 const SETTINGS_FILE = 'settings.json'
 
@@ -121,12 +129,14 @@ export function listFiles(): QueryFile[] {
 }
 
 export function readFile(filePath: string): { content: string; mtime: number } {
+  assertInsideQueriesDir(filePath)
   const content = readFileSync(filePath, 'utf-8')
   const stat = statSync(filePath)
   return { content, mtime: stat.mtimeMs }
 }
 
 export function writeFile(filePath: string, content: string): { success: boolean; mtime: number } {
+  assertInsideQueriesDir(filePath)
   writeFileSync(filePath, content, 'utf-8')
   const stat = statSync(filePath)
   return { success: true, mtime: stat.mtimeMs }
@@ -154,6 +164,7 @@ export function createFile(name?: string): { filePath: string; name: string } {
 }
 
 export function deleteFile(filePath: string): boolean {
+  assertInsideQueriesDir(filePath)
   try {
     shell.trashItem(filePath)
     return true
@@ -163,8 +174,10 @@ export function deleteFile(filePath: string): boolean {
 }
 
 export function renameFile(oldPath: string, newName: string): { newPath: string } {
+  assertInsideQueriesDir(oldPath)
   const newFileName = newName.endsWith('.sql') ? newName : `${newName}.sql`
   const newPath = join(dirname(oldPath), newFileName)
+  assertInsideQueriesDir(newPath)
   if (!existsSync(oldPath)) {
     throw new Error(`File not found: ${oldPath}`)
   }
@@ -173,6 +186,7 @@ export function renameFile(oldPath: string, newName: string): { newPath: string 
 }
 
 export function revealInFinder(filePath: string): void {
+  assertInsideQueriesDir(filePath)
   shell.showItemInFolder(filePath)
 }
 
