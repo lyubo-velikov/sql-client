@@ -1,0 +1,15 @@
+appId: com.lyubovelikov.sql-client
+productName: SQL Client
+directories:
+  buildResources: resources
+  output: release
+files:
+  - out/**/*
+  - "!node_modules/**/*.{md,map,ts}"
+mac:
+  category: public.app-category.developer-tools
+  icon: resources/icon.icns
+  target:
+    - target: dmg
+      arch:
+        - arm64
