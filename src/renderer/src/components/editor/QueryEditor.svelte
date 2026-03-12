@@ -658,6 +658,22 @@
             editing {editableSchema}.{editableTable}
           </span>
         {/if}
+
+        <div class="ml-auto">
+          <button
+            class="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs text-text-secondary
+              hover:text-text-primary hover:bg-surface-hover transition-colors
+              {executing ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}"
+            onclick={executeQuery}
+            disabled={executing}
+            title="Re-run query"
+          >
+            <svg class="w-3.5 h-3.5 {executing ? 'animate-spin' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182M2.985 14.652" />
+            </svg>
+            Refresh
+          </button>
+        </div>
       </div>
 
       <!-- Results grid + sidebar -->
